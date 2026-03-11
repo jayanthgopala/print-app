@@ -27,7 +27,7 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
-    icon: path.join(__dirname, '../assets/icon.png'),
+    // icon: path.join(__dirname, '../assets/icon.png'),
   });
 
   mainWindow.loadFile(path.join(__dirname, '../ui/index.html'));
@@ -47,7 +47,12 @@ function createWindow() {
 }
 
 function createTray() {
-  tray = new Tray(path.join(__dirname, '../assets/tray-icon.png'));
+  try {
+    tray = new Tray(path.join(__dirname, '../assets/tray-icon.png'));
+  } catch (error) {
+    console.log('Tray icon not found, skipping tray creation');
+    return;
+  }
 
   const contextMenu = Menu.buildFromTemplate([
     {

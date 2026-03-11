@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "PC client application for cloud printing platform",
   "main": "src/main.js",
+  "type": "module",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
