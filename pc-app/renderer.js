@@ -277,6 +277,7 @@ function skipCustomer(customerName) {
         orders.forEach(order => {
             if (order.customerName === customerName && !order.printed) {
                 order.skipped = true;
+
             }
         });
         
