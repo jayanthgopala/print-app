@@ -1,5 +1,5 @@
-const schemaSql = `
-  CREATE TABLE IF NOT EXISTS shops (
+const schemaStatements = [
+  `CREATE TABLE IF NOT EXISTS shops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     shop_code TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
@@ -10,9 +10,8 @@ const schemaSql = `
     subscription_expiry DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS devices (
+  )`,
+  `CREATE TABLE IF NOT EXISTS devices (
     device_id TEXT PRIMARY KEY,
     shop_code TEXT NOT NULL,
     device_token TEXT UNIQUE NOT NULL,
@@ -21,13 +20,12 @@ const schemaSql = `
     last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (shop_code) REFERENCES shops(shop_code) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_shops_shop_code ON shops(shop_code);
-  CREATE INDEX IF NOT EXISTS idx_devices_shop_code ON devices(shop_code);
-  CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
-  CREATE INDEX IF NOT EXISTS idx_devices_token ON devices(device_token);
-`;
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_shops_shop_code ON shops(shop_code)',
+  'CREATE INDEX IF NOT EXISTS idx_devices_shop_code ON devices(shop_code)',
+  'CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)',
+  'CREATE INDEX IF NOT EXISTS idx_devices_token ON devices(device_token)',
+];
 
 let nodeDb = null;
 let nodeStatements = null;
@@ -121,6 +119,12 @@ async function execD1(env, sql) {
   await env.DB.exec(sql);
 }
 
+async function initializeD1Schema(env) {
+  for (const statement of schemaStatements) {
+    await execD1(env, statement);
+  }
+}
+
 async function runD1(env, sql, params = []) {
   return env.DB.prepare(sql).bind(...params).run();
 }
@@ -137,7 +141,7 @@ async function allD1(env, sql, params = []) {
 export async function initializeDatabase(env = {}) {
   if (isWorkerRuntime(env)) {
     if (!workerInitialized) {
-      await execD1(env, schemaSql);
+      await initializeD1Schema(env);
       workerInitialized = true;
     }
     return;
@@ -145,7 +149,7 @@ export async function initializeDatabase(env = {}) {
 
   if (!nodeInitialized) {
     const { db } = await getNodeDb(env);
-    db.exec(schemaSql);
+    db.exec(`${schemaStatements.join(';\n')};`);
     nodeInitialized = true;
     console.log('SQLite database initialized');
   }
