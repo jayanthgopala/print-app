@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Print Platform Client</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🖨️ Print Platform Client</h1>
+      <div class="status-bar">
+        <div class="status-indicator" id="status-indicator"></div>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="info-section">
+        <h2>Device Information</h2>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="label">Shop Code:</span>
+            <span id="shop-code">-</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Device ID:</span>
+            <span id="device-id">-</span>
+          </div>
+          <div class="info-item">
+            <span class="label">Queue Length:</span>
+            <span id="queue-length">0</span>
+          </div>
+        </div>
+        <button id="reconnect-btn" class="btn btn-secondary">Reconnect</button>
+      </section>
+
+      <section class="jobs-section">
+        <h2>Print Jobs</h2>
+        <div id="jobs-container">
+          <p class="empty-state">No jobs in queue</p>
+        </div>
+      </section>
+
+      <section class="logs-section">
+        <h2>Activity Log</h2>
+        <div id="logs-container"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

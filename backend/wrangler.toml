@@ -1,0 +1,15 @@
+name = "print-platform-backend"
+main = "src/worker.js"
+compatibility_date = "2026-03-11"
+
+[vars]
+NODE_ENV = "production"
+CORS_ORIGIN = "http://localhost:5173"
+RATE_LIMIT_WINDOW_MS = "900000"
+RATE_LIMIT_MAX_REQUESTS = "100"
+JWT_SECRET = "replace-me-with-a-strong-secret"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "print_app"
+database_id = "db6e71f1-acd1-438d-9f2a-5871b084187c"
