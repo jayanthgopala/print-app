@@ -39,8 +39,8 @@ export function AuthProvider({ children }) {
     setLoading(false);
   };
 
-  const login = async (shopCode, password) => {
-    const data = await authService.login(shopCode, password);
+  const login = async (shopCode) => {
+    const data = await authService.login(shopCode);
     localStorage.setItem('token', data.token);
     setUser({
       shopCode: data.shop.shopCode,

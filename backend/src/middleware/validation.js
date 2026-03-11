@@ -4,7 +4,7 @@ import { z } from 'zod';
 export const schemas = {
   login: z.object({
     shopCode: z.string().min(3).max(50).regex(/^[A-Z0-9_-]+$/),
-    password: z.string().min(6).max(100),
+    password: z.string().min(6).max(100).optional(),
   }),
 
   createShop: z.object({

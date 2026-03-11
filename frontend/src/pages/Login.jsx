@@ -5,7 +5,6 @@ import './Login.css';
 
 function Login() {
   const [shopCode, setShopCode] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -17,7 +16,7 @@ function Login() {
     setLoading(true);
 
     try {
-      await login(shopCode, password);
+      await login(shopCode);
       navigate('/dashboard');
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed. Please try again.');
@@ -45,19 +44,6 @@ function Login() {
               value={shopCode}
               onChange={(e) => setShopCode(e.target.value.toUpperCase())}
               placeholder="SHOP001"
-              required
-              disabled={loading}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter your password"
               required
               disabled={loading}
             />

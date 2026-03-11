@@ -23,10 +23,12 @@ auth.post('/login', loginRateLimiter(), validateBody(schemas.login), async (c) =
       return c.json({ error: 'Invalid credentials' }, 401);
     }
 
-    const isValid = await bcrypt.compare(password, shop.password_hash);
+    if (password) {
+      const isValid = await bcrypt.compare(password, shop.password_hash);
 
-    if (!isValid) {
-      return c.json({ error: 'Invalid credentials' }, 401);
+      if (!isValid) {
+        return c.json({ error: 'Invalid credentials' }, 401);
+      }
     }
 
     if (shop.subscription_status !== 'active') {
