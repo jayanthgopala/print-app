@@ -2,6 +2,8 @@ name = "print-platform-backend"
 main = "src/worker.js"
 compatibility_date = "2026-03-11"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
 
 [vars]
 NODE_ENV = "production"
