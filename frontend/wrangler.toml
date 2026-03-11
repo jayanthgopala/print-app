@@ -1,0 +1,35 @@
+# Cloudflare Pages Configuration
+
+# Build settings
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Environment variables (set these in Cloudflare dashboard)
+# VITE_API_URL - Your backend API URL
+# VITE_WS_URL - Your WebSocket URL
+
+# Headers for PWA and security
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Content-Type = "application/javascript"
+    Service-Worker-Allowed = "/"
+
+# Redirect rules for SPA
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
