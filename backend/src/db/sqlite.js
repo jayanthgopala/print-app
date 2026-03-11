@@ -121,7 +121,7 @@ async function execD1(env, sql) {
 
 async function initializeD1Schema(env) {
   for (const statement of schemaStatements) {
-    await execD1(env, statement);
+    await env.DB.prepare(statement).run();
   }
 }
 
