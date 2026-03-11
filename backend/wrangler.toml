@@ -1,13 +1,13 @@
 name = "print-platform-backend"
 main = "src/worker.js"
 compatibility_date = "2026-03-11"
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
 NODE_ENV = "production"
-CORS_ORIGIN = "http://localhost:5173"
+CORS_ORIGIN = "https://print-platform-frontend.pages.dev,http://localhost:5173"
 RATE_LIMIT_WINDOW_MS = "900000"
 RATE_LIMIT_MAX_REQUESTS = "100"
-JWT_SECRET = "replace-me-with-a-strong-secret"
 
 [[d1_databases]]
 binding = "DB"

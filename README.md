@@ -53,6 +53,7 @@ Deploy commands:
 ```bash
 cd backend
 npm install
+npx wrangler secret put JWT_SECRET
 npx wrangler deploy
 ```
 
