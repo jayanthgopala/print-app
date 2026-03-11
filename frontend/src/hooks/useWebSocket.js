@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
+const WS_URL = import.meta.env.VITE_WS_URL || (import.meta.env.DEV ? 'ws://localhost:3001' : '');
 
 export function useWebSocket(onMessage) {
   const [connected, setConnected] = useState(false);
   const [ws, setWs] = useState(null);
 
   useEffect(() => {
-    if (!import.meta.env.VITE_ENABLE_WEBSOCKET_UPDATES) {
+    if (!import.meta.env.VITE_ENABLE_WEBSOCKET_UPDATES || !WS_URL) {
       return;
     }
 

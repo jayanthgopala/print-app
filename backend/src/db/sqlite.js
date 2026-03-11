@@ -33,6 +33,7 @@ let nodeDb = null;
 let nodeStatements = null;
 let nodeInitialized = false;
 let nodeRuntime = null;
+let workerInitialized = false;
 
 function isWorkerRuntime(env) {
   return Boolean(env?.DB);
@@ -135,7 +136,10 @@ async function allD1(env, sql, params = []) {
 
 export async function initializeDatabase(env = {}) {
   if (isWorkerRuntime(env)) {
-    await execD1(env, schemaSql);
+    if (!workerInitialized) {
+      await execD1(env, schemaSql);
+      workerInitialized = true;
+    }
     return;
   }
 

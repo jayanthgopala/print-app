@@ -10,6 +10,25 @@ function getEnvValue(c, key, fallback) {
   return c.env?.[key] ?? processValue ?? fallback;
 }
 
+function resolveCorsOrigin(origin, c) {
+  const configured = getEnvValue(c, 'CORS_ORIGIN', '*');
+
+  if (configured === '*') {
+    return origin || '*';
+  }
+
+  const allowedOrigins = configured
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (origin && allowedOrigins.includes(origin)) {
+    return origin;
+  }
+
+  return allowedOrigins[0] || '*';
+}
+
 export function createApp() {
   const app = new Hono();
 
@@ -17,7 +36,7 @@ export function createApp() {
   app.use(
     '*',
     cors({
-      origin: (_origin, c) => getEnvValue(c, 'CORS_ORIGIN', '*'),
+      origin: (origin, c) => resolveCorsOrigin(origin, c),
       credentials: true,
     })
   );
