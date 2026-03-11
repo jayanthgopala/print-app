@@ -42,7 +42,7 @@ export function createApp() {
   );
 
   app.get('/health', (c) => {
-    const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node);
+    const isNode = !c.env?.DB && typeof process !== 'undefined' && Boolean(process.versions?.node);
 
     return c.json({
       status: 'healthy',

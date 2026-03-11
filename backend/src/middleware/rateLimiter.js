@@ -1,5 +1,9 @@
 const rateLimitStore = new Map();
 
+function isNodeOnlyRuntime() {
+  return typeof WebSocketPair === 'undefined' && typeof process !== 'undefined' && Boolean(process.versions?.node);
+}
+
 function getNumber(c, key, fallback) {
   const processValue = typeof process !== 'undefined' ? process.env[key] : undefined;
   const value = c.env?.[key] ?? processValue;
@@ -64,7 +68,7 @@ export function rateLimiter(options = {}) {
   };
 }
 
-if (typeof process !== 'undefined' && process.versions?.node) {
+if (isNodeOnlyRuntime()) {
   setInterval(() => {
     const now = Date.now();
     for (const [key, record] of rateLimitStore.entries()) {
