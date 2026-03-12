@@ -6,7 +6,7 @@ This repository contains the full Print Shop application stack:
 - `pc-app/`: Electron app used by the print shop PC
 - `backend/`: Node.js signaling and API server
 - `frontend-admin/`: admin panel for shop management
-- `database/`: PostgreSQL / Supabase schema and migration scripts
+- `database/`: schema and migration scripts, including Cloudflare D1 SQLite files
 
 The key design rule is simple: file bytes do not go through the backend. The frontend and PC app transfer files directly using a WebRTC data channel, while the backend only handles authentication, shop availability, and signaling.
 
@@ -18,8 +18,8 @@ Main technologies:
 
 - Frontend: React, Vite, WebRTC, PWA APIs
 - PC App: Electron, Node.js, `wrtc`, `ws`
-- Backend: Node.js, Express, WebSocket, PostgreSQL / Supabase
-- Database: PostgreSQL / Supabase
+- Backend: Cloudflare Workers, Durable Objects, WebSocket
+- Database: Cloudflare D1 (SQLite)
 
 ## How Data Flows
 
@@ -85,7 +85,7 @@ Note: `server.js` at repo root mirrors the backend server entry. Keep both in sy
 ### Database
 
 - Stores shop records, password hashes, prices, and subscription dates.
-- Supports PostgreSQL directly and Supabase REST fallback logic in the backend.
+- Worker runtime uses Cloudflare D1 (SQLite).
 
 Important files:
 
@@ -113,27 +113,24 @@ Important files:
 
 ### 1. Database Setup
 
-Create a PostgreSQL database, preferably Supabase if you want to use the REST fallback already built into the backend.
+Create and initialize the Cloudflare D1 database used by the Worker backend.
 
-Run the schema:
+Run the D1 schema and seed:
 
-```sql
--- Start with:
-database/schema.sql
+```bash
+cd backend
+npx wrangler d1 execute print_app --file=../database/d1-setup.sql
 ```
 
-If your database is older, apply the additional migration scripts from `database/`.
-
-Create a shop record. Adjust columns if your final schema differs:
-
-```sql
-INSERT INTO shops (shop_code, shop_name, color_price, bw_price, subscription_end)
-VALUES ('SHOP001', 'My Print Shop', 5, 2, NOW() + INTERVAL '1 year');
-```
-
-The shop password is set from the PC app on first login if it is not already stored.
+This creates the SQLite tables and inserts a default admin plus a demo shop user.
 
 ### 2. Backend Setup
+
+The backend is now configured for Cloudflare Workers with:
+
+- a Durable Object handling WebSocket signaling
+- Cloudflare D1 for SQLite storage
+- Web Crypto PBKDF2 password hashing
 
 Install dependencies:
 
@@ -142,31 +139,36 @@ cd backend
 npm install
 ```
 
-Create environment variables for the backend. At minimum you need:
+Create Worker secrets / environment variables. At minimum you need:
 
 ```env
-PORT=3000
-DATABASE_URL=postgres://...
 JWT_SECRET=change-this
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 FRONTEND_URL=https://your-frontend.example
 ADMIN_FRONTEND_URL=https://your-admin.example
 ALLOWED_ORIGINS=https://your-frontend.example,https://your-admin.example
 ```
 
-Start the backend:
+Run locally with Wrangler:
 
 ```bash
-npm start
+npm run dev
 ```
 
-You can also run the root server entry if that is what your deployment uses:
+Deploy to Cloudflare Workers:
 
 ```bash
-cd ..
-npm start
+npm run deploy
 ```
+
+Worker files:
+
+- `backend/server.js`
+- `backend/wrangler.toml`
+
+Important backend note:
+
+- This Worker version uses D1 (`env.DB`) directly.
+- The old Node `pg` / Express server flow is no longer the runtime target for `backend/`.
 
 ### 3. Frontend Setup
 
@@ -369,7 +371,7 @@ Current transfer rules in code:
 WebRTC in production requires secure origins. Use:
 
 - `https://` for frontend and admin
-- `wss://` for backend WebSocket
+- `wss://` for backend Worker WebSocket endpoint
 
 ### STUN / TURN
 

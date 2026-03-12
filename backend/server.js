@@ -1,835 +1,1213 @@
-require('dotenv').config();
-const express = require('express');
-const WebSocket = require('ws');
-const { Pool } = require('pg');
-const jwt = require('jsonwebtoken');
-const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const fetch = globalThis.fetch || require('node-fetch');
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-// CORS - allow configured frontends to call this backend
-// Build allowed origins from multiple env vars: FRONTEND_URL, ADMIN_FRONTEND_URL, CLOUDFLARE_URL, ALLOWED_ORIGINS (comma-separated)
-const rawAllowed = [process.env.FRONTEND_URL, process.env.ADMIN_FRONTEND_URL, process.env.CLOUDFLARE_URL, process.env.ALLOWED_ORIGINS].filter(Boolean);
-// split comma-separated entries
-let allowedOrigins = rawAllowed.reduce((acc, item) => {
-    item.split(',').map(s => s.trim()).forEach(s => { if (s) acc.push(s); });
-    return acc;
-}, []).filter(Boolean);
-
-// Do not implicitly allow localhost in production; require explicit allowed origins via env
-if (allowedOrigins.length === 0) {
-    console.warn('No allowed origins configured; CORS will block browser requests unless origin is empty or explicitly listed in env vars. Set FRONTEND_URL or ALLOWED_ORIGINS.');
-} else {
-    console.log('CORS configured for', allowedOrigins.length, 'origin(s)');
-}
-
-app.use(cors({
-    origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, Postman, server-side)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.includes(origin)) return callback(null, true);
-        console.log('CORS blocked:', origin);
-        return callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-    allowedHeaders: ['Content-Type','Authorization','Accept']
-}));
-app.use(express.json());
-
-// Return JSON error for invalid JSON bodies instead of HTML stack trace
-app.use((err, req, res, next) => {
-    if (err && err.type === 'entity.parse.failed') {
-        console.error('Invalid JSON received:', err.message);
-        return res.status(400).json({ error: 'Invalid JSON' });
-    }
-    // body-parser may also surface SyntaxError instances
-    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-        console.error('Invalid JSON received (syntax):', err.message);
-        return res.status(400).json({ error: 'Invalid JSON' });
-    }
-    next(err);
-});
-
-// PostgreSQL Pool with SSL for production (Supabase)
-// Always use the DATABASE_URL from environment (Supabase). Enable SSL for remote DBs.
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
-
-// Supabase REST fallback (uses service role key) for IPv6-only DB projects
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-async function supabaseFetch(path, opts = {}) {
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error('Supabase config missing');
-    const url = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/${path}`;
-    const headers = Object.assign({
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        'Content-Type': 'application/json'
-    }, opts.headers || {});
-
-    const res = await fetch(url, Object.assign({}, opts, { headers }));
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Supabase REST error: ${res.status} ${text}`);
-    }
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) return res.json();
-    return res.text();
-}
-
-// Inspect a table via Supabase REST by fetching a single row to infer column names.
-async function supabaseInspectTable(table) {
-    try {
-        const rows = await supabaseFetch(`${table}?select=*&limit=1`);
-        if (!rows || rows.length === 0) return [];
-        return Object.keys(rows[0]);
-    } catch (err) {
-        console.error('supabaseInspectTable error:', err && err.message);
-        return null; // signal that inspection failed
-    }
-}
-
-const server = app.listen(port, () => {
-    console.log('Backend listening on port', port);
-});
-
-const wss = new WebSocket.Server({ server });
-
-const onlineShops = new Map();
-const connectedClients = new Map();
-const transferSessions = new Map();
-// Cache subscription checks to avoid frequent DB calls: { shopCode: { status, lastChecked } }
-const subscriptionCache = new Map();
 const MAX_TRANSFER_SIZE_BYTES = 100 * 1024 * 1024;
+const subscriptionCache = new Map();
+let schemaReadyPromise;
 
-function sendJson(ws, payload) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(payload));
-    }
-}
+const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS shops (
+    id TEXT PRIMARY KEY,
+    shop_code TEXT NOT NULL UNIQUE,
+    shop_name TEXT,
+    owner_name TEXT,
+    email TEXT,
+    phone TEXT,
+    password_hash TEXT,
+    color_price REAL,
+    bw_price REAL,
+    subscription_end TEXT,
+    pc_endpoint TEXT,
+    pc_status TEXT DEFAULT 'offline',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
-function registerTransferSession(transferId, shopCode, clientId, clientWs) {
-    transferSessions.set(transferId, {
-        shopCode,
-        clientId,
-        clientWs,
-        createdAt: Date.now()
-    });
-}
+CREATE TABLE IF NOT EXISTS admins (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
-function getTransferSession(transferId) {
-    return transferSessions.get(transferId) || null;
-}
+CREATE INDEX IF NOT EXISTS idx_shops_shop_code ON shops (shop_code);
+CREATE INDEX IF NOT EXISTS idx_admins_username ON admins (username);
+`;
 
-function closeTransferSession(transferId) {
-    transferSessions.delete(transferId);
-}
-
-function cleanupSocketSessions(ws) {
-    for (const [transferId, session] of transferSessions.entries()) {
-        if (session.clientWs === ws || session.shopCode === ws.shopCode) {
-            transferSessions.delete(transferId);
-        }
-    }
-}
-
-setInterval(() => {
-    const cutoff = Date.now() - (30 * 60 * 1000);
-    for (const [transferId, session] of transferSessions.entries()) {
-        if (session.createdAt < cutoff) {
-            transferSessions.delete(transferId);
-        }
-    }
-}, 5 * 60 * 1000).unref();
-
-// Health check endpoint for Render
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Root endpoint
-app.get('/', (req, res) => {
-    res.json({ 
-        message: 'Print Shop API Server',
-        version: '2.0.0',
-        status: 'running'
-    });
-});
-
-app.get('/shop/public/:shopCode', async (req, res) => {
-    try {
-        const shopCode = req.params.shopCode;
-        if (!shopCode) return res.status(400).json({ error: 'shopCode required' });
-
-        let shop;
+export default {
+    async fetch(request, env) {
         try {
-            const result = await pool.query('SELECT shop_code, shop_name, color_price, bw_price, subscription_end FROM shops WHERE shop_code = $1', [shopCode]);
-            if (result.rows.length === 0) return res.status(404).json({ error: 'Shop not found' });
-            shop = result.rows[0];
-        } catch (dbErr) {
+            const url = new URL(request.url);
+
+            if (isWebSocketUpgrade(request)) {
+                const id = env.SIGNALING_ROOM.idFromName('global');
+                return env.SIGNALING_ROOM.get(id).fetch(request);
+            }
+
+            if (request.method === 'OPTIONS') {
+                return new Response(null, {
+                    status: 204,
+                    headers: buildCorsHeaders(request, env)
+                });
+            }
+
+            if (request.method === 'GET' && url.pathname === '/health') {
+                return json({ status: 'ok', timestamp: new Date().toISOString() }, 200, request, env);
+            }
+
+            if (request.method === 'GET' && url.pathname === '/') {
+                return json({
+                    message: 'Print Shop API Server',
+                    version: '3.0.0-worker',
+                    status: 'running'
+                }, 200, request, env);
+            }
+
+            if (request.method === 'GET' && matchPath(url.pathname, '/shop/public/:shopCode')) {
+                const { shopCode } = matchPath(url.pathname, '/shop/public/:shopCode');
+                return handlePublicShopLookup(shopCode, request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/shop/info') {
+                return handleShopInfo(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/auth/login') {
+                return handleShopLogin(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/auth/shop-login') {
+                return handleShopLogin(request, env, { tokenType: 'SHOP', expiresInSeconds: 30 * 24 * 60 * 60 });
+            }
+
+            if (request.method === 'POST' && url.pathname === '/auth/client-token') {
+                return handleClientToken(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/auth/shop-token') {
+                return handleShopToken(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/shop/update-prices') {
+                return handleUpdatePrices(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/shop/set-password') {
+                return handleSetPassword(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/admin/login') {
+                return handleAdminLogin(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/admin/create-shop') {
+                return handleCreateShop(request, env);
+            }
+
+            if (request.method === 'GET' && url.pathname === '/admin/shops') {
+                return handleListShops(request, env);
+            }
+
+            if (request.method === 'DELETE' && matchPath(url.pathname, '/admin/shop/:shopCode')) {
+                const { shopCode } = matchPath(url.pathname, '/admin/shop/:shopCode');
+                return handleDeleteShop(shopCode, request, env);
+            }
+
+            if (request.method === 'PATCH' && matchPath(url.pathname, '/admin/shop/:shopCode')) {
+                const { shopCode } = matchPath(url.pathname, '/admin/shop/:shopCode');
+                return handlePatchShop(shopCode, request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/admin/register') {
+                return handleAdminRegister(request, env);
+            }
+
+            if (request.method === 'GET' && url.pathname === '/subscription/check') {
+                return handleSubscriptionCheck(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/pc/status') {
+                return handlePcStatus(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/share') {
+                const shopId = url.searchParams.get('shop') || '';
+                return redirect(`/?shop=${encodeURIComponent(shopId)}&shared=true`, request, env);
+            }
+
+            return json({ error: 'Not found' }, 404, request, env);
+        } catch (error) {
+            console.error('Unhandled worker error:', error);
+            return json({ error: 'Internal server error' }, 500, request, env);
+        }
+    }
+};
+
+export class SignalingRoom {
+    constructor(state, env) {
+        this.state = state;
+        this.env = env;
+        this.onlineShops = new Map();
+        this.connectedClients = new Map();
+        this.transferSessions = new Map();
+        this.socketMeta = new Map();
+    }
+
+    async fetch(request) {
+        if (!isWebSocketUpgrade(request)) {
+            return new Response('Expected WebSocket upgrade', { status: 426 });
+        }
+
+        const pair = new WebSocketPair();
+        const [client, server] = Object.values(pair);
+        server.accept();
+        this.socketMeta.set(server, { isRegistered: false, shopCode: null, clientId: null });
+
+        server.addEventListener('message', (event) => {
+            this.handleMessage(server, event.data).catch((error) => {
+                console.error('DO WebSocket message error:', error);
+                this.safeSend(server, { type: 'TRANSFER_ERROR', reason: 'internal_error' });
+            });
+        });
+
+        server.addEventListener('close', () => this.cleanupSocket(server));
+        server.addEventListener('error', () => this.cleanupSocket(server));
+
+        return new Response(null, { status: 101, webSocket: client });
+    }
+
+    async handleMessage(ws, rawMessage) {
+        let data;
+        try {
+            data = JSON.parse(rawMessage);
+        } catch {
+            this.safeSend(ws, { type: 'TRANSFER_ERROR', reason: 'invalid_json' });
+            return;
+        }
+
+        if (data.type === 'REGISTER_SHOP') {
+            if (!data.token) {
+                this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'missing_token' });
+                ws.close(1008, 'missing_token');
+                return;
+            }
+
+            let decoded;
             try {
-                const rows = await supabaseFetch(`shops?shop_code=eq.${encodeURIComponent(shopCode)}&select=shop_code,shop_name,color_price,bw_price,subscription_end`);
-                if (!rows || rows.length === 0) return res.status(404).json({ error: 'Shop not found' });
-                shop = rows[0];
-            } catch (restErr) {
-                console.error('Public shop lookup DB/REST error:', dbErr && dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
+                decoded = await verifyJwt(data.token, this.env.JWT_SECRET);
+            } catch {
+                this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'invalid_token' });
+                ws.close(1008, 'invalid_token');
+                return;
+            }
+
+            const shopCode = normalizeShopCode(decoded.shopCode || decoded.shop_code || decoded.shop || decoded.code);
+            if (!shopCode) {
+                this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'invalid_payload' });
+                ws.close(1008, 'invalid_payload');
+                return;
+            }
+
+            try {
+                const shop = await dbGetShopByCode(this.env, shopCode);
+                const subEnd = shop?.subscription_end;
+                if (subEnd && new Date(subEnd).getTime() <= Date.now()) {
+                    this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'subscription_expired' });
+                    ws.close(1008, 'subscription_expired');
+                    return;
+                }
+            } catch (error) {
+                console.error('WS register subscription check error:', error);
+                this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'internal_error' });
+                ws.close(1011, 'internal_error');
+                return;
+            }
+
+            const meta = this.socketMeta.get(ws) || {};
+            meta.isRegistered = true;
+            meta.shopCode = shopCode;
+            this.socketMeta.set(ws, meta);
+            this.onlineShops.set(shopCode, ws);
+            this.safeSend(ws, { type: 'REGISTER_SUCCESS' });
+            return;
+        }
+
+        if (data.type === 'CHECK_STATUS') {
+            const shopWs = this.onlineShops.get(normalizeShopCode(data.shopId));
+            const meta = this.socketMeta.get(ws) || {};
+            meta.clientId = data.senderId || meta.clientId || crypto.randomUUID();
+            this.socketMeta.set(ws, meta);
+            this.connectedClients.set(meta.clientId, ws);
+            this.safeSend(ws, { type: 'STATUS_RESPONSE', status: shopWs ? 'ONLINE' : 'OFFLINE' });
+            return;
+        }
+
+        if (data.type === 'TRANSFER_INIT') {
+            const shopWs = this.onlineShops.get(data.shopId);
+            const transferSize = Number(data?.metadata?.fileSize || 0);
+
+            if (!data.transferId || !data.senderId) {
+                this.safeSend(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId || null, reason: 'invalid_transfer' });
+                return;
+            }
+            if (!Number.isFinite(transferSize) || transferSize <= 0 || transferSize > MAX_TRANSFER_SIZE_BYTES) {
+                this.safeSend(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'invalid_file_size' });
+                return;
+            }
+            if (!shopWs) {
+                this.safeSend(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'shop_offline' });
+                return;
+            }
+
+            this.connectedClients.set(data.senderId, ws);
+            const meta = this.socketMeta.get(ws) || {};
+            meta.clientId = data.senderId;
+            this.socketMeta.set(ws, meta);
+            this.registerTransferSession(data.transferId, data.shopId, data.senderId, ws);
+
+            this.safeSend(shopWs, {
+                type: 'TRANSFER_INIT',
+                transferId: data.transferId,
+                clientId: data.senderId,
+                metadata: data.metadata
+            });
+            return;
+        }
+
+        if (data.type === 'WEBRTC_OFFER') {
+            const shopWs = this.onlineShops.get(data.shopId);
+            if (!shopWs) {
+                this.safeSend(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'shop_offline' });
+                this.transferSessions.delete(data.transferId);
+                return;
+            }
+
+            this.connectedClients.set(data.senderId, ws);
+            const meta = this.socketMeta.get(ws) || {};
+            meta.clientId = data.senderId;
+            this.socketMeta.set(ws, meta);
+            this.registerTransferSession(data.transferId, data.shopId, data.senderId, ws);
+
+            this.safeSend(shopWs, {
+                type: 'WEBRTC_OFFER',
+                transferId: data.transferId,
+                clientId: data.senderId,
+                offer: data.offer,
+                metadata: data.metadata
+            });
+            return;
+        }
+
+        if (data.type === 'WEBRTC_ANSWER') {
+            const session = this.transferSessions.get(data.transferId);
+            if (!session) return;
+            this.safeSend(session.clientWs, {
+                type: 'WEBRTC_ANSWER',
+                transferId: data.transferId,
+                answer: data.answer
+            });
+            return;
+        }
+
+        if (data.type === 'ICE_CANDIDATE') {
+            const session = this.transferSessions.get(data.transferId);
+            if (!session) return;
+
+            const meta = this.socketMeta.get(ws) || {};
+            if (meta.shopCode) {
+                this.safeSend(session.clientWs, {
+                    type: 'ICE_CANDIDATE',
+                    transferId: data.transferId,
+                    candidate: data.candidate
+                });
+            } else {
+                const shopWs = this.onlineShops.get(session.shopCode);
+                if (shopWs) {
+                    this.safeSend(shopWs, {
+                        type: 'ICE_CANDIDATE',
+                        transferId: data.transferId,
+                        clientId: session.clientId,
+                        candidate: data.candidate
+                    });
+                }
+            }
+            return;
+        }
+
+        if (data.type === 'TRANSFER_STATE') {
+            const session = this.transferSessions.get(data.transferId);
+            if (!session) return;
+            this.safeSend(session.clientWs, {
+                type: 'TRANSFER_STATE',
+                transferId: data.transferId,
+                state: data.state,
+                details: data.details || null
+            });
+            if (data.state === 'COMPLETED' || data.state === 'FAILED') {
+                this.transferSessions.delete(data.transferId);
+            }
+            return;
+        }
+
+        if (data.type === 'SEND_FILE') {
+            const meta = this.socketMeta.get(ws) || {};
+            const shopCode = normalizeShopCode(data.shopId || data.shopCode);
+            const shopWs = this.onlineShops.get(shopCode);
+            if (!shopWs) {
+                this.safeSend(ws, {
+                    type: 'TRANSFER_ERROR',
+                    transferId: data.transferId || null,
+                    reason: 'shop_offline'
+                });
+                return;
+            }
+
+            const senderId = data.senderId || data.clientId || meta.clientId;
+            if (senderId) {
+                this.connectedClients.set(senderId, ws);
+                meta.clientId = senderId;
+                this.socketMeta.set(ws, meta);
+            }
+
+            this.safeSend(shopWs, {
+                type: 'SEND_FILE',
+                transferId: data.transferId || null,
+                clientId: senderId || null,
+                chunkIndex: data.chunkIndex,
+                totalChunks: data.totalChunks,
+                isLastChunk: data.isLastChunk,
+                metadata: data.metadata || null,
+                fileData: data.fileData
+            });
+            return;
+        }
+
+        if (data.type === 'CHUNK_ACK') {
+            const clientSession = this.connectedClients.get(data.clientId);
+            if (clientSession) {
+                this.safeSend(clientSession, {
+                    type: 'CHUNK_ACK',
+                    transferId: data.transferId || null,
+                    chunkIndex: data.chunkIndex
+                });
+            }
+            return;
+        }
+
+        if (data.type === 'FILE_ACK') {
+            const clientSession = this.connectedClients.get(data.clientId);
+            if (clientSession) {
+                this.safeSend(clientSession, {
+                    type: 'FILE_ACK',
+                    transferId: data.transferId || null,
+                    success: data.success !== false
+                });
+            }
+            return;
+        }
+    }
+
+    registerTransferSession(transferId, shopCode, clientId, clientWs) {
+        this.transferSessions.set(transferId, {
+            shopCode,
+            clientId,
+            clientWs,
+            createdAt: Date.now()
+        });
+    }
+
+    cleanupSocket(ws) {
+        const meta = this.socketMeta.get(ws);
+        if (meta?.shopCode) {
+            this.onlineShops.delete(meta.shopCode);
+        }
+        if (meta?.clientId) {
+            this.connectedClients.delete(meta.clientId);
+        }
+
+        for (const [transferId, session] of this.transferSessions.entries()) {
+            if (session.clientWs === ws || session.shopCode === meta?.shopCode) {
+                this.transferSessions.delete(transferId);
             }
         }
 
-        const subEnd = shop.subscription_end || shop.subscriptionEnd || shop.end_date || shop.expires_at;
+        this.socketMeta.delete(ws);
+    }
+
+    safeSend(ws, payload) {
+        try {
+            ws.send(JSON.stringify(payload));
+        } catch (error) {
+            console.error('safeSend failed:', error);
+        }
+    }
+}
+
+async function handlePublicShopLookup(shopCode, request, env) {
+    if (!shopCode) return json({ error: 'shopCode required' }, 400, request, env);
+
+    try {
+        const shop = await dbGetShopByCode(env, normalizeShopCode(shopCode));
+        if (!shop) return json({ error: 'Shop not found' }, 404, request, env);
+
+        const subEnd = shop.subscription_end;
         if (subEnd && new Date(subEnd).getTime() <= Date.now()) {
-            return res.status(403).json({ error: 'Subscription expired' });
+            return json({ error: 'Subscription expired' }, 403, request, env);
         }
 
-        return res.json({
+        return json({
             shop: {
                 code: shop.shop_code,
                 name: shop.shop_name || shop.name || shop.shop_code,
                 colorPrice: shop.color_price ?? null,
                 bwPrice: shop.bw_price ?? null
             }
-        });
+        }, 200, request, env);
     } catch (error) {
         console.error('Public shop lookup error:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// Login endpoint
-app.post('/auth/login', async (req, res) => {
+async function handleShopInfo(request, env) {
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    const { shopCode } = body.data;
+    if (!shopCode) return json({ error: 'shopCode required' }, 400, request, env);
+
     try {
-        const { shopCode, password } = req.body;
-        if (!shopCode || !password) return res.status(400).json({ error: 'shopCode and password required' });
-        let shop;
-        try {
-            const result = await pool.query('SELECT s.* FROM shops s WHERE s.shop_code = $1', [shopCode]);
-            if (result.rows.length === 0) {
-                throw new Error('Not found');
-            }
-            shop = result.rows[0];
-        } catch (dbErr) {
-            // Fallback to Supabase REST
-            try {
-                const rows = await supabaseFetch(`shops?shop_code=eq.${encodeURIComponent(shopCode)}&select=*`);
-                if (!rows || rows.length === 0) return res.status(404).json({ error: 'Shop not found' });
-                shop = rows[0];
-            } catch (restErr) {
-                console.error('Login DB/REST error:', dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
-            }
+        const shop = await dbGetShopByCode(env, normalizeShopCode(shopCode));
+        if (!shop) {
+            return json({ error: 'Shop not found', shop: null }, 404, request, env);
         }
-        // Verify password via password_hash
-        const hash = shop.password_hash || shop.passwordHash || shop.passwordHash;
-        if (!hash) return res.status(403).json({ error: 'Password not set for shop' });
-        const ok = await bcrypt.compare(password, hash);
-        if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-
-        // Check subscription end date (if present). If expired, prevent login.
-        const subEnd = shop.subscription_end || shop.subscriptionEnd || shop.end_date || shop.expires_at;
-        if (subEnd) {
-            const now = Date.now();
-            const endTs = new Date(subEnd).getTime();
-            if (!isNaN(endTs) && now > endTs) {
-                return res.status(403).json({ error: 'Subscription expired' });
+        return json({
+            shop: {
+                code: shop.shop_code,
+                name: shop.shop_name || shop.name || shop.shop_code,
+                pcEndpoint: shop.pc_endpoint || null,
+                status: shop.pc_status || 'offline',
+                colorPrice: shop.color_price ?? null,
+                bwPrice: shop.bw_price ?? null
             }
+        }, 200, request, env);
+    } catch (error) {
+        console.error('Shop info error:', error);
+        return json({ error: 'Internal server error' }, 500, request, env);
+    }
+}
+
+async function handleShopLogin(request, env, options = {}) {
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    const { shopCode, password } = body.data;
+    if (!shopCode || !password) {
+        return json({ error: 'shopCode and password required' }, 400, request, env);
+    }
+
+    try {
+        const normalizedShopCode = normalizeShopCode(shopCode);
+        const shop = await dbGetShopByCode(env, normalizedShopCode);
+        if (!shop) return json({ error: 'Shop not found' }, 404, request, env);
+
+        const hash = shop.password_hash;
+        if (!hash) return json({ error: 'Password not set for shop' }, 403, request, env);
+
+        const ok = await comparePassword(password, hash);
+        if (!ok) return json({ error: 'Invalid credentials' }, 401, request, env);
+
+        const subEnd = shop.subscription_end;
+        if (subEnd && Date.now() > new Date(subEnd).getTime()) {
+            return json({ error: 'Subscription expired' }, 403, request, env);
         }
 
-        const token = jwt.sign({ shopId: shop.id, shopCode: shop.shop_code || shop.shop_code }, process.env.JWT_SECRET);
-        res.json({ token, shop: { code: shop.shop_code || shop.shop_code, name: shop.shop_name || shop.name, colorPrice: shop.color_price, bwPrice: shop.bw_price, subscriptionEnd: subEnd || null } });
+        const token = await signJwt({
+            shopId: shop.id,
+            shopCode: shop.shop_code,
+            type: options.tokenType || undefined,
+            exp: Math.floor(Date.now() / 1000) + (options.expiresInSeconds || (24 * 60 * 60))
+        }, env.JWT_SECRET);
+
+        return json({
+            token,
+            shop: {
+                code: shop.shop_code,
+                name: shop.shop_name || shop.name,
+                colorPrice: shop.color_price,
+                bwPrice: shop.bw_price,
+                subscriptionEnd: subEnd || null
+            }
+        }, 200, request, env);
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// Update shop prices endpoint
-app.post('/shop/update-prices', async (req, res) => {
+async function handleClientToken(request, env) {
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    const { shopCode } = body.data;
+    if (!shopCode) return json({ error: 'shopCode required' }, 400, request, env);
+
     try {
-        const { shopCode, colorPrice, bwPrice } = req.body;
-        // Per config: do not access Postgres for price updates. Use Supabase REST API only.
-        try {
-            const updated = await supabaseFetch(`shops?shop_code=eq.${encodeURIComponent(shopCode)}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ color_price: colorPrice, bw_price: bwPrice }),
-                headers: { Prefer: 'return=representation' }
-            });
-            return res.json({ success: true, shop: updated && updated[0] });
-        } catch (restErr) {
-            console.error('Update prices REST error:', restErr.message);
-            return res.status(500).json({ error: 'Internal server error' });
+        const normalizedShopCode = normalizeShopCode(shopCode);
+        const shop = await dbGetShopByCode(env, normalizedShopCode);
+        if (!shop) return json({ error: 'Shop not found' }, 404, request, env);
+
+        const subEnd = shop.subscription_end;
+        if (subEnd && Date.now() > new Date(subEnd).getTime()) {
+            return json({ error: 'Subscription expired' }, 403, request, env);
         }
+
+        const token = await signJwt({
+            type: 'CLIENT',
+            clientId: crypto.randomUUID(),
+            shopCode: shop.shop_code,
+            shopId: shop.id,
+            exp: Math.floor(Date.now() / 1000) + (60 * 60)
+        }, env.JWT_SECRET);
+
+        return json({ token }, 200, request, env);
+    } catch (error) {
+        console.error('Client token error:', error);
+        return json({ error: 'Internal server error' }, 500, request, env);
+    }
+}
+
+async function handleShopToken(request, env) {
+    return handleShopLogin(request, env, { tokenType: 'SHOP', expiresInSeconds: 30 * 24 * 60 * 60 });
+}
+
+async function handleUpdatePrices(request, env) {
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    const { shopCode, colorPrice, bwPrice } = body.data;
+    if (!shopCode) return json({ error: 'shopCode required' }, 400, request, env);
+
+    try {
+        await dbRun(
+            env,
+            'UPDATE shops SET color_price = ?, bw_price = ?, updated_at = CURRENT_TIMESTAMP WHERE shop_code = ?',
+            colorPrice,
+            bwPrice,
+            normalizeShopCode(shopCode)
+        );
+        const updated = await dbGetShopByCode(env, normalizeShopCode(shopCode));
+        return json({ success: true, shop: updated || null }, 200, request, env);
     } catch (error) {
         console.error('Update prices error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// Set shop password (hashes server-side). Allows initial password setup.
-app.post('/shop/set-password', async (req, res) => {
+async function handleSetPassword(request, env) {
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    const { shopCode, password } = body.data;
+    if (!shopCode || !password) {
+        return json({ error: 'shopCode and password required' }, 400, request, env);
+    }
+
     try {
-        const { shopCode, password } = req.body;
-        if (!shopCode || !password) return res.status(400).json({ error: 'shopCode and password required' });
-
-        const hash = await bcrypt.hash(password, 10);
-
-        // Try direct DB update first
-        try {
-            const result = await pool.query('UPDATE shops SET password_hash = $1 WHERE shop_code = $2 RETURNING *', [hash, shopCode]);
-            if (result.rows.length === 0) return res.status(404).json({ error: 'Shop not found' });
-            return res.json({ success: true });
-        } catch (dbErr) {
-            // Fallback to Supabase REST
-            try {
-                await supabaseFetch(`shops?shop_code=eq.${encodeURIComponent(shopCode)}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ password_hash: hash }),
-                    headers: { Prefer: 'return=representation' }
-                });
-                return res.json({ success: true });
-            } catch (restErr) {
-                console.error('Set password DB/REST error:', dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
-            }
-        }
+        const hash = await hashPassword(password);
+        await dbRun(
+            env,
+            'UPDATE shops SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE shop_code = ?',
+            hash,
+            normalizeShopCode(shopCode)
+        );
+        return json({ success: true }, 200, request, env);
     } catch (error) {
         console.error('Set password error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// --- Admin endpoints ---
-// Admin login: POST { username, password }
-app.post('/admin/login', async (req, res) => {
+async function handleAdminLogin(request, env) {
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    const { username, password } = body.data;
+    if (!username || !password) {
+        return json({ error: 'username and password required' }, 400, request, env);
+    }
+
     try {
-        const { username, password } = req.body;
-        if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+        const admin = await dbGetAdminByUsername(env, username);
+        if (!admin) return json({ error: 'Admin not found' }, 404, request, env);
 
-        // Try DB first
-        try {
-            const q = await pool.query('SELECT * FROM admins WHERE username = $1', [username]);
-            if (q.rows.length === 0) {
-                // fallback to REST
-                throw new Error('notfound');
-            }
-            const admin = q.rows[0];
-            const ok = await bcrypt.compare(password, admin.password_hash);
-            if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-            const token = jwt.sign({ adminId: admin.id, username: admin.username, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '12h' });
-            return res.json({ token, admin: { id: admin.id, username: admin.username } });
-        } catch (dbErr) {
-            // Supabase REST fallback
-            try {
-                const rows = await supabaseFetch(`admins?username=eq.${encodeURIComponent(username)}&select=*`);
-                if (!rows || rows.length === 0) return res.status(404).json({ error: 'Admin not found' });
-                const admin = rows[0];
-                const ok = await bcrypt.compare(password, admin.password_hash);
-                if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-                const token = jwt.sign({ adminId: admin.id, username: admin.username, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '12h' });
-                return res.json({ token, admin: { id: admin.id, username: admin.username } });
-            } catch (restErr) {
-                console.error('Admin login error:', dbErr && dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
-            }
-        }
+        const ok = await comparePassword(password, admin.password_hash);
+        if (!ok) return json({ error: 'Invalid credentials' }, 401, request, env);
+
+        const token = await signJwt({
+            adminId: admin.id,
+            username: admin.username,
+            isAdmin: true,
+            exp: Math.floor(Date.now() / 1000) + (12 * 60 * 60)
+        }, env.JWT_SECRET);
+
+        return json({ token, admin: { id: admin.id, username: admin.username } }, 200, request, env);
     } catch (error) {
         console.error('Admin login error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// Create shop (admin only) - requires Authorization: Bearer <token>
-app.post('/admin/create-shop', async (req, res) => {
+async function handleCreateShop(request, env) {
+    const admin = await requireAdmin(request, env);
+    if (admin.errorResponse) return admin.errorResponse;
+
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    const { shopCode, shopName, password, colorPrice, bwPrice, subscriptionDays, subscriptionEnd } = body.data;
+    if (!shopCode || !password) {
+        return json({ error: 'shopCode and password required' }, 400, request, env);
+    }
+
     try {
-        const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-        if (!auth) return res.status(401).json({ error: 'Unauthorized' });
-        let decoded;
-        try { decoded = jwt.verify(auth, process.env.JWT_SECRET); } catch (err) { return res.status(401).json({ error: 'Invalid token' }); }
-        if (!decoded || !decoded.isAdmin) return res.status(403).json({ error: 'Forbidden' });
-
-        const { shopCode, shopName, password, colorPrice, bwPrice, subscriptionDays, subscriptionEnd } = req.body;
-        if (!shopCode || !password) return res.status(400).json({ error: 'shopCode and password required' });
-
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await hashPassword(password);
         const startDate = new Date();
         let endDate;
+
         if (subscriptionEnd) {
-            // accept ISO date or yyyy-mm-dd from frontend
             endDate = new Date(subscriptionEnd);
-            if (isNaN(endDate.getTime())) {
-                return res.status(400).json({ error: 'Invalid subscriptionEnd date' });
+            if (Number.isNaN(endDate.getTime())) {
+                return json({ error: 'Invalid subscriptionEnd date' }, 400, request, env);
             }
         } else {
             const days = parseInt(subscriptionDays || '365', 10) || 365;
             endDate = new Date(startDate.getTime() + days * 24 * 60 * 60 * 1000);
         }
 
-        // Try DB insert first
-        try {
-            const shopRes = await pool.query('INSERT INTO shops (shop_code, shop_name, password_hash, color_price, bw_price, subscription_end, created_at) VALUES ($1,$2,$3,$4,$5,$6,now()) RETURNING *', [shopCode, shopName || null, hash, colorPrice || null, bwPrice || null, endDate.toISOString()]);
-            const shop = shopRes.rows[0];
-            return res.json({ success: true, shop: shop });
-        } catch (dbErr) {
-            // REST fallback: insert into shops and subscriptions
-            try {
-                // Inspect Supabase 'shops' to ensure password_hash exists and use subscription_end field
-                const shopCols = await supabaseInspectTable('shops');
-                if (shopCols === null) {
-                    console.error('Could not inspect Supabase shops table schema');
-                    return res.status(500).json({ error: 'Supabase inspect failed' });
-                }
-                if (!shopCols.includes('password_hash')) {
-                    return res.status(500).json({
-                        error: 'Supabase schema missing column',
-                        details: "Missing column: password_hash on 'shops'. Run the DB migration to add this column (see database/ensure_columns.sql)."
-                    });
-                }
+        const shopId = crypto.randomUUID();
+        await dbRun(
+            env,
+            `INSERT INTO shops (
+                id, shop_code, shop_name, password_hash, color_price, bw_price, subscription_end, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            shopId,
+            normalizeShopCode(shopCode),
+            shopName || normalizeShopCode(shopCode),
+            hash,
+            colorPrice ?? null,
+            bwPrice ?? null,
+            endDate.toISOString()
+        );
 
-                const shopPayload = { shop_code: shopCode, shop_name: shopName || null, password_hash: hash, color_price: colorPrice || null, bw_price: bwPrice || null, subscription_end: endDate.toISOString() };
-                const shopInsert = await supabaseFetch('shops', {
-                    method: 'POST',
-                    body: JSON.stringify([shopPayload])
-                });
-                const createdShop = Array.isArray(shopInsert) ? shopInsert[0] : shopInsert;
-                return res.json({ success: true, shop: createdShop });
-            } catch (restErr) {
-                console.error('Create shop DB/REST error:', dbErr && dbErr.message, restErr && restErr.message);
-                const msg = restErr && restErr.message ? restErr.message : '';
-                if (msg.includes("Could not find the 'password_hash'")) {
-                    return res.status(500).json({
-                        error: 'Supabase schema missing column',
-                        details: "Missing column: password_hash. Run the DB migration to add this column (see database/schema.sql). Example: ALTER TABLE shops ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);"
-                    });
-                }
-                if (msg.includes('PGRST204')) {
-                    return res.status(500).json({ error: 'Supabase REST schema error', details: msg });
-                }
-                return res.status(500).json({ error: 'Internal server error' });
-            }
-        }
+        return json({ success: true, shop: await dbGetShopByCode(env, normalizeShopCode(shopCode)) }, 200, request, env);
     } catch (error) {
         console.error('Create shop error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// List shops for admin with subscription status
-app.get('/admin/shops', async (req, res) => {
+async function handleListShops(request, env) {
+    const admin = await requireAdmin(request, env);
+    if (admin.errorResponse) return admin.errorResponse;
+
     try {
-        const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-        if (!auth) return res.status(401).json({ error: 'Unauthorized' });
-        let decoded;
-        try { decoded = jwt.verify(auth, process.env.JWT_SECRET); } catch (err) { return res.status(401).json({ error: 'Invalid token' }); }
-        if (!decoded || !decoded.isAdmin) return res.status(403).json({ error: 'Forbidden' });
-
-        // Try DB first: read shops and subscription_end
-        try {
-            const q = await pool.query(`SELECT s.shop_code, s.shop_name, s.color_price, s.bw_price, s.subscription_end, s.created_at FROM shops s ORDER BY s.shop_code`);
-            return res.json({ shops: q.rows });
-        } catch (dbErr) {
-            try {
-                const rows = await supabaseFetch('shops?select=*');
-                return res.json({ shops: rows });
-            } catch (restErr) {
-                console.error('Admin shops DB/REST error:', dbErr && dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
-            }
-        }
+        const rows = await dbAll(
+            env,
+            'SELECT shop_code, shop_name, color_price, bw_price, subscription_end, created_at FROM shops ORDER BY shop_code'
+        );
+        return json({ shops: rows || [] }, 200, request, env);
     } catch (error) {
         console.error('Admin shops error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// Delete shop (admin only)
-app.delete('/admin/shop/:shopCode', async (req, res) => {
+async function handleDeleteShop(shopCode, request, env) {
+    const admin = await requireAdmin(request, env);
+    if (admin.errorResponse) return admin.errorResponse;
+
+    if (!shopCode) return json({ error: 'shopCode required' }, 400, request, env);
+
     try {
-        const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-        if (!auth) return res.status(401).json({ error: 'Unauthorized' });
-        let decoded;
-        try { decoded = jwt.verify(auth, process.env.JWT_SECRET); } catch (err) { return res.status(401).json({ error: 'Invalid token' }); }
-        if (!decoded || !decoded.isAdmin) return res.status(403).json({ error: 'Forbidden' });
-
-        const shopCode = req.params.shopCode;
-        if (!shopCode) return res.status(400).json({ error: 'shopCode required' });
-
-        // Try DB delete first
-        try {
-            // find shop id
-            const q = await pool.query('SELECT id FROM shops WHERE shop_code = $1', [shopCode]);
-            if (q.rows.length === 0) return res.status(404).json({ error: 'Shop not found' });
-            const shopId = q.rows[0].id;
-            const del = await pool.query('DELETE FROM shops WHERE id = $1 RETURNING *', [shopId]);
-            return res.json({ success: true, shop: del.rows[0] });
-        } catch (dbErr) {
-            // Supabase REST fallback: delete shops
-            try {
-                await supabaseFetch(`shops?shop_code=eq.${encodeURIComponent(shopCode)}`, { method: 'DELETE' });
-                return res.json({ success: true });
-            } catch (restErr) {
-                console.error('Delete shop DB/REST error:', dbErr && dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
-            }
-        }
+        await dbRun(env, 'DELETE FROM shops WHERE shop_code = ?', normalizeShopCode(shopCode));
+        return json({ success: true }, 200, request, env);
     } catch (error) {
         console.error('Delete shop error:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// --- end admin endpoints ---
+async function handlePatchShop(shopCode, request, env) {
+    const admin = await requireAdmin(request, env);
+    if (admin.errorResponse) return admin.errorResponse;
 
-// Admin: update shop fields (prices, subscription_end)
-app.patch('/admin/shop/:shopCode', async (req, res) => {
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    if (!shopCode) return json({ error: 'shopCode required' }, 400, request, env);
+
+    const { colorPrice, bwPrice, subscriptionDays, subscriptionEnd } = body.data;
+    const patch = {};
+
+    if (colorPrice !== undefined) patch.color_price = colorPrice;
+    if (bwPrice !== undefined) patch.bw_price = bwPrice;
+
+    if (subscriptionEnd) {
+        const endDate = new Date(subscriptionEnd);
+        if (Number.isNaN(endDate.getTime())) return json({ error: 'Invalid subscriptionEnd' }, 400, request, env);
+        patch.subscription_end = endDate.toISOString();
+    } else if (subscriptionDays) {
+        const days = parseInt(subscriptionDays, 10) || 0;
+        patch.subscription_end = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    if (Object.keys(patch).length === 0) {
+        return json({ error: 'No fields to update' }, 400, request, env);
+    }
+
     try {
-        const auth = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-        if (!auth) return res.status(401).json({ error: 'Unauthorized' });
-        let decoded;
-        try { decoded = jwt.verify(auth, process.env.JWT_SECRET); } catch (err) { return res.status(401).json({ error: 'Invalid token' }); }
-        if (!decoded || !decoded.isAdmin) return res.status(403).json({ error: 'Forbidden' });
-
-        const shopCode = req.params.shopCode;
-        const { colorPrice, bwPrice, subscriptionDays, subscriptionEnd } = req.body;
-        if (!shopCode) return res.status(400).json({ error: 'shopCode required' });
-
-        let endDate = null;
-        if (subscriptionEnd) {
-            endDate = new Date(subscriptionEnd);
-            if (isNaN(endDate.getTime())) return res.status(400).json({ error: 'Invalid subscriptionEnd' });
-        } else if (subscriptionDays) {
-            const days = parseInt(subscriptionDays, 10) || 0;
-            endDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-        }
-
-        // Build update query
-        const updates = [];
+        const clauses = [];
         const params = [];
-        let idx = 1;
-        if (colorPrice !== undefined) { updates.push(`color_price = $${idx}`); params.push(colorPrice); idx++; }
-        if (bwPrice !== undefined) { updates.push(`bw_price = $${idx}`); params.push(bwPrice); idx++; }
-        if (endDate !== null) { updates.push(`subscription_end = $${idx}`); params.push(endDate.toISOString()); idx++; }
-        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
-
-        params.push(shopCode);
-        const q = `UPDATE shops SET ${updates.join(', ')} WHERE shop_code = $${idx} RETURNING *`;
-        try {
-            const r = await pool.query(q, params);
-            if (r.rows.length === 0) return res.status(404).json({ error: 'Shop not found' });
-            return res.json({ success: true, shop: r.rows[0] });
-        } catch (dbErr) {
-            // REST fallback
-            try {
-                const body = {};
-                if (colorPrice !== undefined) body.color_price = colorPrice;
-                if (bwPrice !== undefined) body.bw_price = bwPrice;
-                if (endDate !== null) body.subscription_end = endDate.toISOString();
-                await supabaseFetch(`shops?shop_code=eq.${encodeURIComponent(shopCode)}`, { method: 'PATCH', body: JSON.stringify(body), headers: { Prefer: 'return=representation' } });
-                return res.json({ success: true });
-            } catch (restErr) {
-                console.error('Update shop DB/REST error:', dbErr && dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
-            }
+        if (patch.color_price !== undefined) {
+            clauses.push('color_price = ?');
+            params.push(patch.color_price);
         }
+        if (patch.bw_price !== undefined) {
+            clauses.push('bw_price = ?');
+            params.push(patch.bw_price);
+        }
+        if (patch.subscription_end !== undefined) {
+            clauses.push('subscription_end = ?');
+            params.push(patch.subscription_end);
+        }
+        clauses.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(normalizeShopCode(shopCode));
+        await dbRun(env, `UPDATE shops SET ${clauses.join(', ')} WHERE shop_code = ?`, ...params);
+        return json({ success: true }, 200, request, env);
     } catch (error) {
         console.error('Update shop error:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// One-time admin registration endpoint.
-// If `ADMIN_SETUP_KEY` is set in env, caller must supply matching `setupKey` in the POST body.
-// Otherwise registration is allowed only when no admins exist (first-time setup).
-app.post('/admin/register', async (req, res) => {
+async function handleAdminRegister(request, env) {
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
+
+    const { username, password, setupKey } = body.data;
+    if (!username || !password) {
+        return json({ error: 'username and password required' }, 400, request, env);
+    }
+
     try {
-        const { username, password, setupKey } = req.body;
-        if (!username || !password) return res.status(400).json({ error: 'username and password required' });
-
-        const requiredKey = process.env.ADMIN_SETUP_KEY;
-        if (requiredKey) {
-            if (!setupKey || setupKey !== requiredKey) return res.status(403).json({ error: 'setup key required' });
+        if (env.ADMIN_SETUP_KEY) {
+            if (!setupKey || setupKey !== env.ADMIN_SETUP_KEY) {
+                return json({ error: 'setup key required' }, 403, request, env);
+            }
         } else {
-            // If no setup key defined, only allow registration if there are no admins yet
-            try {
-                const q = await pool.query('SELECT count(*) AS cnt FROM admins');
-                const cnt = parseInt(q.rows[0].cnt || '0', 10);
-                if (cnt > 0) return res.status(403).json({ error: 'Admin registration disabled' });
-            } catch (dbErr) {
-                // fallback to REST check
-                try {
-                    const rows = await supabaseFetch('admins?select=id');
-                    if (rows && rows.length > 0) return res.status(403).json({ error: 'Admin registration disabled' });
-                } catch (restErr) {
-                    console.error('Admin register check error:', dbErr && dbErr.message, restErr && restErr.message);
-                    return res.status(500).json({ error: 'Internal server error' });
-                }
+            const existingAdmins = await dbAll(env, 'SELECT id FROM admins LIMIT 1');
+            if (existingAdmins?.length) {
+                return json({ error: 'Admin registration disabled' }, 403, request, env);
             }
         }
 
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await hashPassword(password);
+        const adminId = crypto.randomUUID();
+        await dbRun(
+            env,
+            'INSERT INTO admins (id, username, password_hash, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+            adminId,
+            username,
+            hash
+        );
+        const created = await dbGetAdminByUsername(env, username);
+        const token = await signJwt({
+            adminId: created.id,
+            username: created.username,
+            isAdmin: true,
+            exp: Math.floor(Date.now() / 1000) + (12 * 60 * 60)
+        }, env.JWT_SECRET);
 
-        // Try DB insert first
-        try {
-            const ins = await pool.query('INSERT INTO admins (username, password_hash, created_at) VALUES ($1,$2,now()) RETURNING *', [username, hash]);
-            const admin = ins.rows[0];
-            const token = jwt.sign({ adminId: admin.id, username: admin.username, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '12h' });
-            return res.json({ success: true, token, admin: { id: admin.id, username: admin.username } });
-        } catch (dbErr) {
-            // REST fallback
-            try {
-                const insert = await supabaseFetch('admins', { method: 'POST', body: JSON.stringify([{ username, password_hash: hash }]) });
-                const created = Array.isArray(insert) ? insert[0] : insert;
-                const token = jwt.sign({ adminId: created.id, username: created.username, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '12h' });
-                return res.json({ success: true, token, admin: { id: created.id, username: created.username } });
-            } catch (restErr) {
-                console.error('Admin register DB/REST error:', dbErr && dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
-            }
-        }
+        return json({
+            success: true,
+            token,
+            admin: { id: created.id, username: created.username }
+        }, 200, request, env);
     } catch (error) {
         console.error('Admin register error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// Subscription check endpoint: returns subscription status; queries DB at most once per 24h
-app.get('/subscription/check', async (req, res) => {
+async function handleSubscriptionCheck(request, env) {
+    const url = new URL(request.url);
+    const shopCode = url.searchParams.get('shop');
+    if (!shopCode) return json({ error: 'shop query required' }, 400, request, env);
+
+    const cached = subscriptionCache.get(shopCode);
+    const now = Date.now();
+    if (cached && (now - cached.lastChecked) < 24 * 60 * 60 * 1000) {
+        return json({ shop: shopCode, status: cached.status, source: 'cache' }, 200, request, env);
+    }
+
     try {
-        const shopCode = req.query.shop;
-        if (!shopCode) return res.status(400).json({ error: 'shop query required' });
-
-        const cached = subscriptionCache.get(shopCode);
-        const now = Date.now();
-        if (cached && (now - cached.lastChecked) < 24 * 60 * 60 * 1000) {
-            return res.json({ shop: shopCode, status: cached.status, source: 'cache' });
-        }
-
-        // Check subscription_end on shops table first
-        try {
-            const result = await pool.query('SELECT subscription_end FROM shops WHERE shop_code = $1', [shopCode]);
-            const endVal = result.rows && result.rows[0] && result.rows[0].subscription_end;
-            const status = (!endVal || new Date(endVal).getTime() > now) ? 'active' : 'expired';
-            subscriptionCache.set(shopCode, { status, lastChecked: now });
-            return res.json({ shop: shopCode, status, source: 'db' });
-        } catch (dbErr) {
-            try {
-                const rows = await supabaseFetch(`shops?select=subscription_end&shop_code=eq.${encodeURIComponent(shopCode)}`);
-                const endVal = rows && rows[0] && (rows[0].subscription_end || rows[0].end_date || rows[0].expires_at);
-                const status = (!endVal || new Date(endVal).getTime() > now) ? 'active' : 'expired';
-                subscriptionCache.set(shopCode, { status, lastChecked: now });
-                return res.json({ shop: shopCode, status, source: 'rest' });
-            } catch (restErr) {
-                console.error('Subscription check DB/REST error:', dbErr.message, restErr && restErr.message);
-                return res.status(500).json({ error: 'Internal server error' });
-            }
-        }
+        const shop = await dbGetShopByCode(env, normalizeShopCode(shopCode));
+        const endVal = shop?.subscription_end;
+        const status = (!endVal || new Date(endVal).getTime() > now) ? 'active' : 'expired';
+        subscriptionCache.set(shopCode, { status, lastChecked: now });
+        return json({ shop: shopCode, status, source: 'd1' }, 200, request, env);
     } catch (error) {
         console.error('Subscription check error:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return json({ error: 'Internal server error' }, 500, request, env);
     }
-});
+}
 
-// Share Target endpoint (for PWA shared files)
-app.post('/share', (req, res) => {
-    // Redirect to frontend with shared=true flag
-    const shopId = req.query.shop || '';
-    res.redirect(`/?shop=${shopId}&shared=true`);
-});
+async function handlePcStatus(request, env) {
+    const auth = getBearerToken(request);
+    if (!auth) return json({ error: 'Unauthorized' }, 401, request, env);
 
-wss.on('connection', (ws) => {
-    // mark as not registered until a successful REGISTER_SHOP with valid JWT
-    ws.isRegistered = false;
+    let decoded;
+    try {
+        decoded = await verifyJwt(auth, env.JWT_SECRET);
+    } catch {
+        return json({ error: 'Invalid token' }, 401, request, env);
+    }
 
-    ws.on('message', async (message) => {
-        try {
-            const data = JSON.parse(message);
+    if (!decoded || decoded.type !== 'SHOP') {
+        return json({ error: 'Shop token required' }, 403, request, env);
+    }
 
-            if (data.type === 'REGISTER_SHOP') {
-                // Require token
-                if (!data.token) {
-                    ws.send(JSON.stringify({ type: 'REGISTER_FAILED', reason: 'missing_token' }));
-                    ws.close();
-                    return;
-                }
+    const body = await readJson(request, env);
+    if (body.errorResponse) return body.errorResponse;
 
-                let decoded;
-                try {
-                    decoded = jwt.verify(data.token, process.env.JWT_SECRET);
-                } catch (err) {
-                    ws.send(JSON.stringify({ type: 'REGISTER_FAILED', reason: 'invalid_token' }));
-                    ws.close();
-                    return;
-                }
+    const { endpoint, status } = body.data;
+    const patch = {};
+    if (endpoint !== undefined) patch.pc_endpoint = endpoint;
+    if (status !== undefined) patch.pc_status = status;
 
-                // decoded must contain shopCode/shopCode
-                const shopCode = decoded.shopCode || decoded.shop_code || decoded.shop || decoded.code;
-                if (!shopCode) {
-                    ws.send(JSON.stringify({ type: 'REGISTER_FAILED', reason: 'invalid_payload' }));
-                    ws.close();
-                    return;
-                }
-                // Ensure subscription still valid for this shop
-                try {
-                    const r = await pool.query('SELECT subscription_end FROM shops WHERE shop_code = $1', [shopCode]);
-                    const subEnd = r.rows && r.rows[0] && r.rows[0].subscription_end;
-                    if (subEnd && new Date(subEnd).getTime() <= Date.now()) {
-                        ws.send(JSON.stringify({ type: 'REGISTER_FAILED', reason: 'subscription_expired' }));
-                        ws.close();
-                        return;
-                    }
-                } catch (dbErr) {
-                    // fallback to REST check
-                    try {
-                        const rows = await supabaseFetch(`shops?select=subscription_end&shop_code=eq.${encodeURIComponent(shopCode)}`);
-                        const subEnd = rows && rows[0] && (rows[0].subscription_end || rows[0].end_date || rows[0].expires_at);
-                        if (subEnd && new Date(subEnd).getTime() <= Date.now()) {
-                            ws.send(JSON.stringify({ type: 'REGISTER_FAILED', reason: 'subscription_expired' }));
-                            ws.close();
-                            return;
-                        }
-                    } catch (restErr) {
-                        console.error('WS register subscription check error:', dbErr && dbErr.message, restErr && restErr.message);
-                        ws.send(JSON.stringify({ type: 'REGISTER_FAILED', reason: 'internal_error' }));
-                        ws.close();
-                        return;
-                    }
-                }
-
-                onlineShops.set(shopCode, ws);
-                ws.shopCode = shopCode;
-                ws.isRegistered = true;
-                console.log('shop registered', shopCode);
-                ws.send(JSON.stringify({ type: 'REGISTER_SUCCESS' }));
-            }
-
-            else if (data.type === 'CHECK_STATUS') {
-                const shopWs = onlineShops.get(data.shopId);
-                if (shopWs && shopWs.readyState === WebSocket.OPEN) {
-                    connectedClients.set(data.senderId, ws);
-                    ws.clientId = data.senderId;
-                    sendJson(ws, { type: 'STATUS_RESPONSE', status: 'ONLINE' });
-                } else {
-                    sendJson(ws, { type: 'STATUS_RESPONSE', status: 'OFFLINE' });
-                }
-            }
-
-            else if (data.type === 'TRANSFER_INIT') {
-                const shopWs = onlineShops.get(data.shopId);
-                const transferSize = Number(data?.metadata?.fileSize || 0);
-
-                if (!data.transferId || !data.senderId) {
-                    sendJson(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId || null, reason: 'invalid_transfer' });
-                    return;
-                }
-                if (!Number.isFinite(transferSize) || transferSize <= 0 || transferSize > MAX_TRANSFER_SIZE_BYTES) {
-                    sendJson(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'invalid_file_size' });
-                    return;
-                }
-                if (!shopWs || shopWs.readyState !== WebSocket.OPEN) {
-                    sendJson(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'shop_offline' });
-                    return;
-                }
-
-                connectedClients.set(data.senderId, ws);
-                ws.clientId = data.senderId;
-                registerTransferSession(data.transferId, data.shopId, data.senderId, ws);
-
-                sendJson(shopWs, {
-                    type: 'TRANSFER_INIT',
-                    transferId: data.transferId,
-                    clientId: data.senderId,
-                    metadata: data.metadata
-                });
-            }
-
-            else if (data.type === 'WEBRTC_OFFER') {
-                const shopWs = onlineShops.get(data.shopId);
-                if (!shopWs || shopWs.readyState !== WebSocket.OPEN) {
-                    sendJson(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'shop_offline' });
-                    closeTransferSession(data.transferId);
-                    return;
-                }
-
-                connectedClients.set(data.senderId, ws);
-                ws.clientId = data.senderId;
-                registerTransferSession(data.transferId, data.shopId, data.senderId, ws);
-                sendJson(shopWs, {
-                    type: 'WEBRTC_OFFER',
-                    transferId: data.transferId,
-                    clientId: data.senderId,
-                    offer: data.offer,
-                    metadata: data.metadata
-                });
-            }
-
-            else if (data.type === 'WEBRTC_ANSWER') {
-                const session = getTransferSession(data.transferId);
-                if (!session) return;
-                sendJson(session.clientWs, {
-                    type: 'WEBRTC_ANSWER',
-                    transferId: data.transferId,
-                    answer: data.answer
-                });
-            }
-
-            else if (data.type === 'ICE_CANDIDATE') {
-                const session = getTransferSession(data.transferId);
-                if (!session) return;
-
-                const isShopSender = !!ws.shopCode;
-                if (isShopSender) {
-                    sendJson(session.clientWs, {
-                        type: 'ICE_CANDIDATE',
-                        transferId: data.transferId,
-                        candidate: data.candidate
-                    });
-                } else {
-                    const shopWs = onlineShops.get(session.shopCode);
-                    if (shopWs && shopWs.readyState === WebSocket.OPEN) {
-                        sendJson(shopWs, {
-                            type: 'ICE_CANDIDATE',
-                            transferId: data.transferId,
-                            clientId: session.clientId,
-                            candidate: data.candidate
-                        });
-                    }
-                }
-            }
-
-            else if (data.type === 'TRANSFER_STATE') {
-                const session = getTransferSession(data.transferId);
-                if (!session) return;
-                sendJson(session.clientWs, {
-                    type: 'TRANSFER_STATE',
-                    transferId: data.transferId,
-                    state: data.state,
-                    details: data.details || null
-                });
-                if (data.state === 'COMPLETED' || data.state === 'FAILED') {
-                    closeTransferSession(data.transferId);
-                }
-            }
-        } catch (error) {
-            console.error('WebSocket error:', error);
+    try {
+        const clauses = [];
+        const params = [];
+        if (patch.pc_endpoint !== undefined) {
+            clauses.push('pc_endpoint = ?');
+            params.push(patch.pc_endpoint);
         }
+        if (patch.pc_status !== undefined) {
+            clauses.push('pc_status = ?');
+            params.push(patch.pc_status);
+        }
+        clauses.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(decoded.shopId);
+        await dbRun(env, `UPDATE shops SET ${clauses.join(', ')} WHERE id = ?`, ...params);
+        return json({ success: true }, 200, request, env);
+    } catch (error) {
+        console.error('PC status update error:', error);
+        return json({ error: 'Internal server error' }, 500, request, env);
+    }
+}
+
+async function requireAdmin(request, env) {
+    const auth = getBearerToken(request);
+    if (!auth) {
+        return { errorResponse: json({ error: 'Unauthorized' }, 401, request, env) };
+    }
+
+    try {
+        const decoded = await verifyJwt(auth, env.JWT_SECRET);
+        if (!decoded?.isAdmin) {
+            return { errorResponse: json({ error: 'Forbidden' }, 403, request, env) };
+        }
+        return { decoded };
+    } catch {
+        return { errorResponse: json({ error: 'Invalid token' }, 401, request, env) };
+    }
+}
+
+async function dbGetShopByCode(env, shopCode) {
+    return dbFirst(
+        env,
+        'SELECT id, shop_code, shop_name, owner_name, email, phone, password_hash, color_price, bw_price, subscription_end, pc_endpoint, pc_status, created_at, updated_at FROM shops WHERE shop_code = ?',
+        shopCode
+    );
+}
+
+async function dbGetAdminByUsername(env, username) {
+    return dbFirst(
+        env,
+        'SELECT id, username, password_hash, created_at FROM admins WHERE username = ?',
+        username
+    );
+}
+
+async function dbFirst(env, sql, ...params) {
+    assertDb(env);
+    await ensureSchema(env);
+    return env.DB.prepare(sql).bind(...params).first();
+}
+
+async function dbAll(env, sql, ...params) {
+    assertDb(env);
+    await ensureSchema(env);
+    const result = await env.DB.prepare(sql).bind(...params).all();
+    return result.results || [];
+}
+
+async function dbRun(env, sql, ...params) {
+    assertDb(env);
+    await ensureSchema(env);
+    return env.DB.prepare(sql).bind(...params).run();
+}
+
+async function ensureSchema(env) {
+    if (schemaReadyPromise) {
+        return schemaReadyPromise;
+    }
+
+    schemaReadyPromise = (async () => {
+        const statements = SCHEMA_SQL
+            .split(';')
+            .map((statement) => statement.trim())
+            .filter(Boolean);
+
+        for (const statement of statements) {
+            await env.DB.prepare(statement).run();
+        }
+    })().catch((error) => {
+        schemaReadyPromise = null;
+        throw error;
     });
 
-    ws.on('close', () => {
-        if (ws.shopCode) {
-            onlineShops.delete(ws.shopCode);
-            console.log('shop disconnected', ws.shopCode);
-        }
-        if (ws.clientId) {
-            connectedClients.delete(ws.clientId);
-        }
-        cleanupSocketSessions(ws);
-    });
-});
+    return schemaReadyPromise;
+}
 
-console.log('✓ Signaling server ready');
+function assertDb(env) {
+    if (!env.DB) {
+        throw new Error('D1 binding DB is missing');
+    }
+}
+
+async function readJson(request, env) {
+    try {
+        return { data: await request.json() };
+    } catch {
+        return { errorResponse: json({ error: 'Invalid JSON' }, 400, request, env) };
+    }
+}
+
+function matchPath(pathname, pattern) {
+    const pathParts = pathname.split('/').filter(Boolean);
+    const patternParts = pattern.split('/').filter(Boolean);
+    if (pathParts.length !== patternParts.length) return null;
+
+    const params = {};
+    for (let i = 0; i < patternParts.length; i += 1) {
+        const patternPart = patternParts[i];
+        const pathPart = pathParts[i];
+        if (patternPart.startsWith(':')) {
+            params[patternPart.slice(1)] = decodeURIComponent(pathPart);
+            continue;
+        }
+        if (patternPart !== pathPart) return null;
+    }
+    return params;
+}
+
+function getBearerToken(request) {
+    const auth = request.headers.get('authorization') || '';
+    return auth.replace(/^Bearer\s+/i, '') || '';
+}
+
+function isWebSocketUpgrade(request) {
+    return (request.headers.get('Upgrade') || '').toLowerCase() === 'websocket';
+}
+
+function json(payload, status, request, env) {
+    return new Response(JSON.stringify(payload), {
+        status,
+        headers: {
+            'Content-Type': 'application/json',
+            ...buildCorsHeaders(request, env)
+        }
+    });
+}
+
+function redirect(location, request, env) {
+    return new Response(null, {
+        status: 302,
+        headers: {
+            Location: location,
+            ...buildCorsHeaders(request, env)
+        }
+    });
+}
+
+function buildCorsHeaders(request, env) {
+    const allowedOrigins = getAllowedOrigins(env);
+    const origin = request.headers.get('Origin');
+    const allowOrigin = !origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin) ? (origin || '*') : 'null';
+
+    return {
+        'Access-Control-Allow-Origin': allowOrigin,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type,Authorization,Accept',
+        Vary: 'Origin'
+    };
+}
+
+function getAllowedOrigins(env) {
+    return [
+        env.FRONTEND_URL,
+        env.ADMIN_FRONTEND_URL,
+        env.CLOUDFLARE_URL,
+        env.ALLOWED_ORIGINS
+    ]
+        .filter(Boolean)
+        .flatMap((value) => value.split(','))
+        .map((value) => value.trim())
+        .filter(Boolean);
+}
+
+function normalizeShopCode(value) {
+    return String(value || '').trim().replace(/[<>]/g, '').toUpperCase();
+}
+
+async function signJwt(payload, secret) {
+    const header = { alg: 'HS256', typ: 'JWT' };
+    const encodedHeader = base64UrlEncode(JSON.stringify(header));
+    const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+    const signingInput = `${encodedHeader}.${encodedPayload}`;
+    const signature = await hmacSha256(signingInput, secret);
+    return `${signingInput}.${signature}`;
+}
+
+async function verifyJwt(token, secret) {
+    const parts = token.split('.');
+    if (parts.length !== 3) throw new Error('Invalid token');
+
+    const [encodedHeader, encodedPayload, signature] = parts;
+    const signingInput = `${encodedHeader}.${encodedPayload}`;
+    const expectedSignature = await hmacSha256(signingInput, secret);
+    if (!timingSafeEqual(signature, expectedSignature)) throw new Error('Invalid signature');
+
+    const header = JSON.parse(base64UrlDecode(encodedHeader));
+    if (header.alg !== 'HS256') throw new Error('Unsupported algorithm');
+
+    const payload = JSON.parse(base64UrlDecode(encodedPayload));
+    if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) throw new Error('Token expired');
+    return payload;
+}
+
+async function comparePassword(password, hash) {
+    if (!hash) return false;
+    return compareLegacyPassword(password, hash);
+}
+
+async function hashPassword(password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const derived = await crypto.subtle.deriveBits(
+        {
+            name: 'PBKDF2',
+            salt,
+            iterations: 100000,
+            hash: 'SHA-256'
+        },
+        await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode(password),
+            { name: 'PBKDF2' },
+            false,
+            ['deriveBits']
+        ),
+        256
+    );
+
+    const combined = new Uint8Array([...salt, ...new Uint8Array(derived)]);
+    return encodeBytesToBase64(combined);
+}
+
+async function compareLegacyPassword(password, hash) {
+    try {
+        const combined = decodeBase64ToBytes(hash);
+        const salt = combined.slice(0, 16);
+        const originalHash = combined.slice(16);
+        const derived = await crypto.subtle.deriveBits(
+            {
+                name: 'PBKDF2',
+                salt,
+                iterations: 100000,
+                hash: 'SHA-256'
+            },
+            await crypto.subtle.importKey(
+                'raw',
+                new TextEncoder().encode(password),
+                { name: 'PBKDF2' },
+                false,
+                ['deriveBits']
+            ),
+            256
+        );
+
+        const candidate = new Uint8Array(derived);
+        if (candidate.length !== originalHash.length) return false;
+
+        let mismatch = 0;
+        for (let i = 0; i < candidate.length; i += 1) {
+            mismatch |= candidate[i] ^ originalHash[i];
+        }
+        return mismatch === 0;
+    } catch {
+        return false;
+    }
+}
+
+async function hmacSha256(value, secret) {
+    const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(secret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+    const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value));
+    return base64UrlEncodeBytes(new Uint8Array(signature));
+}
+
+function base64UrlEncode(value) {
+    return base64UrlEncodeBytes(new TextEncoder().encode(value));
+}
+
+function base64UrlEncodeBytes(bytes) {
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecode(value) {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+    return atob(padded);
+}
+
+function timingSafeEqual(a, b) {
+    if (a.length !== b.length) return false;
+    let mismatch = 0;
+    for (let i = 0; i < a.length; i += 1) {
+        mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    }
+    return mismatch === 0;
+}
+
+function decodeBase64ToBytes(value) {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+function encodeBytesToBase64(bytes) {
+    let binary = '';
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
+}

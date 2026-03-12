@@ -6,16 +6,38 @@ const ShopReceiver = require('./services/fileReceiver');
 const QRCode = require('qrcode');
 const pdfPrinter = require('pdf-to-printer');
 
+loadLocalEnv(path.join(__dirname, '.env'));
+
 const store = new Store();
 let mainWindow;
 let shopReceiver;
 
-// Backend URLs must be provided via environment variables in deployed builds
-const API_URL = process.env.API_URL || '';
-const WS_URL = process.env.WS_URL || (API_URL ? API_URL.replace(/^http/, 'ws') : '');
+// Default to the deployed Worker backend; env vars can still override this.
+const DEFAULT_API_URL = 'https://print-app-backend.jayanthgopala21.workers.dev';
+const API_URL = process.env.API_URL || DEFAULT_API_URL;
+const WS_URL = process.env.WS_URL || API_URL.replace(/^http/, 'ws');
+console.log('PC app backend config:', { API_URL, WS_URL });
 
 process.on('uncaughtException', (err) => console.error('Uncaught:', err));
 process.on('unhandledRejection', (err) => console.error('Unhandled:', err));
+
+function loadLocalEnv(envPath) {
+    if (!fs.existsSync(envPath)) return;
+
+    const content = fs.readFileSync(envPath, 'utf8');
+    for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+
+        const eqIndex = line.indexOf('=');
+        if (eqIndex === -1) continue;
+
+        const key = line.slice(0, eqIndex).trim();
+        const value = line.slice(eqIndex + 1).trim();
+        if (!key || process.env[key]) continue;
+        process.env[key] = value;
+    }
+}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -62,6 +84,10 @@ ipcMain.handle('save-settings', async (event, settings) => {
     store.set('bwPrinter', settings.bwPrinter || '');
 
     try {
+        if (!/^https?:\/\//i.test(API_URL)) {
+            return { success: false, message: `Invalid API_URL: ${API_URL || '(empty)'}` };
+        }
+
         // Try login first with provided password
         try {
             const loginResp = await fetch(`${API_URL}/auth/login`, {
