@@ -84,8 +84,13 @@ export default function App() {
 
     const handleConnect = () => {
         const normalizedShopId = normalizeShopCode(shopId);
-        if (!normalizedShopId || !WS_URL) {
+        if (!normalizedShopId) {
             setErrorMessage('Enter a valid shop code before connecting.');
+            return;
+        }
+
+        if (!WS_URL) {
+            setErrorMessage('Frontend WebSocket is not configured.');
             return;
         }
 
