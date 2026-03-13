@@ -1,9 +1,52 @@
 {
   "name": "printshop-pc-app",
   "version": "2.0.0",
+  "description": "Desktop console for direct print shop file receiving and printing",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.jayanthgopala.printshop.pcapp",
+    "productName": "Print Shop Manager",
+    "artifactName": "PrintShopManager-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "clear-prices.js",
+      "services/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/app-icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Print Shop Manager"
+    }
   },
   "dependencies": {
     "electron": "^28.0.0",
@@ -14,5 +57,8 @@
     "qrcode": "^1.5.3",
     "wrtc": "^0.4.7",
     "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.13.3"
   }
 }
