@@ -2,6 +2,7 @@
   "name": "printshop-pc-app",
   "version": "2.0.0",
   "description": "Desktop console for direct print shop file receiving and printing",
+  "author": "Jayanth Gopala",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -14,7 +15,7 @@
     "productName": "Print Shop Manager",
     "artifactName": "PrintShopManager-${version}-${arch}.${ext}",
     "directories": {
-      "output": "release"
+      "output": "release-dist"
     },
     "files": [
       "index.html",
@@ -30,6 +31,7 @@
       "main": "main.js"
     },
     "win": {
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "nsis",
@@ -49,7 +51,6 @@
     }
   },
   "dependencies": {
-    "electron": "^28.0.0",
     "electron-store": "^8.1.0",
     "node-fetch": "^2.7.0",
     "node-pre-gyp": "^0.17.0",
@@ -59,6 +60,7 @@
     "ws": "^8.14.2"
   },
   "devDependencies": {
+    "electron": "^28.0.0",
     "electron-builder": "^24.13.3"
   }
 }

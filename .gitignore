@@ -9,3 +9,6 @@ yarn-error.log*
 .DS_Store
 .vscode/
 .idea/
+pc-app/release/
+pc-app/release-dist/
+pc-app/release-final/
