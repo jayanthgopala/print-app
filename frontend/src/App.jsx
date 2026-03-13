@@ -7,6 +7,7 @@ const DEFAULT_PRINT_SETTINGS = {
     colorPages: '',
     bwPages: '',
     imageMode: 'color',
+    pageMode: 'custom',
     paperSize: 'A4',
     orientation: 'portrait',
     copies: 1,
@@ -128,10 +129,10 @@ export default function App() {
                     totalFiles: files.length,
                     colorPages: item.file.type.startsWith('image/')
                         ? (item.imageMode === 'color' ? 'Full Image' : '')
-                        : (item.colorPages || ''),
+                        : (item.pageMode === 'all-color' ? 'All Pages' : (item.colorPages || '')),
                     bwPages: item.file.type.startsWith('image/')
                         ? (item.imageMode === 'bw' ? 'Full Image' : '')
-                        : (item.bwPages || ''),
+                        : (item.pageMode === 'all-bw' ? 'All Pages' : (item.bwPages || '')),
                     paperSize: item.paperSize || 'A4',
                     orientation: item.orientation || 'portrait',
                     copies: Number(item.copies || 1),
@@ -317,20 +318,59 @@ export default function App() {
                                                 </div>
                                             ) : (
                                                 <>
-                                                    <input
-                                                        type="text"
-                                                        placeholder="Color pages (e.g., 21,26-29)"
-                                                        value={item.colorPages}
-                                                        onChange={(e) => updateFilePages(i, 'colorPages', e.target.value)}
-                                                        className="input-small"
-                                                    />
-                                                    <input
-                                                        type="text"
-                                                        placeholder="B&W pages (e.g., 10-20,22-25,30-40)"
-                                                        value={item.bwPages}
-                                                        onChange={(e) => updateFilePages(i, 'bwPages', e.target.value)}
-                                                        className="input-small"
-                                                    />
+                                                    <div className="print-type-selector">
+                                                        <label className="print-type-label">Document Print</label>
+                                                        <div className="radio-group">
+                                                            <label className="radio-option">
+                                                                <input
+                                                                    type="radio"
+                                                                    name={`pageMode-${i}`}
+                                                                    value="custom"
+                                                                    checked={item.pageMode === 'custom'}
+                                                                    onChange={() => updateFileOption(i, 'pageMode', 'custom')}
+                                                                />
+                                                                <span>Custom Pages</span>
+                                                            </label>
+                                                            <label className="radio-option">
+                                                                <input
+                                                                    type="radio"
+                                                                    name={`pageMode-${i}`}
+                                                                    value="all-color"
+                                                                    checked={item.pageMode === 'all-color'}
+                                                                    onChange={() => updateFileOption(i, 'pageMode', 'all-color')}
+                                                                />
+                                                                <span>All Pages Color</span>
+                                                            </label>
+                                                            <label className="radio-option">
+                                                                <input
+                                                                    type="radio"
+                                                                    name={`pageMode-${i}`}
+                                                                    value="all-bw"
+                                                                    checked={item.pageMode === 'all-bw'}
+                                                                    onChange={() => updateFileOption(i, 'pageMode', 'all-bw')}
+                                                                />
+                                                                <span>All Pages B&W</span>
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                    {item.pageMode === 'custom' && (
+                                                        <>
+                                                            <input
+                                                                type="text"
+                                                                placeholder="Color pages (e.g., 21,26-29)"
+                                                                value={item.colorPages}
+                                                                onChange={(e) => updateFilePages(i, 'colorPages', e.target.value)}
+                                                                className="input-small"
+                                                            />
+                                                            <input
+                                                                type="text"
+                                                                placeholder="B&W pages (e.g., 10-20,22-25,30-40)"
+                                                                value={item.bwPages}
+                                                                onChange={(e) => updateFilePages(i, 'bwPages', e.target.value)}
+                                                                className="input-small"
+                                                            />
+                                                        </>
+                                                    )}
                                                 </>
                                             )}
                                             <div className="print-type-selector">

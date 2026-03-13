@@ -386,7 +386,7 @@ ipcMain.handle('print-file', async (event, filePath, options) => {
 
         return new Promise((resolve) => {
             printWindow.webContents.print({
-                silent: false,
+                silent: true,
                 printBackground: true,
                 deviceName: printerName,
                 color: options.isColor !== false,
