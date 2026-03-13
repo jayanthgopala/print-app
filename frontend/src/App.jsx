@@ -3,6 +3,16 @@ import { FileTransferClient } from './services/webrtc';
 import { API_URL, WS_URL } from './config';
 import './App.css';
 
+const DEFAULT_PRINT_SETTINGS = {
+    colorPages: '',
+    bwPages: '',
+    paperSize: 'A4',
+    orientation: 'portrait',
+    copies: 1,
+    duplex: 'simplex',
+    scale: 'fit'
+};
+
 export default function App() {
     const [shopId, setShopId] = useState('');
     const [status, setStatus] = useState('DISCONNECTED');
@@ -77,16 +87,10 @@ export default function App() {
     };
 
     const handleFileSelect = (e) => {
-        const selectedFiles = Array.from(e.target.files).map((file) => {
-            const isImage = file.type.startsWith('image/');
-            return {
-                file,
-                isImage,
-                printType: isImage ? 'color' : null,
-                colorPages: isImage ? null : '',
-                bwPages: isImage ? null : ''
-            };
-        });
+        const selectedFiles = Array.from(e.target.files).map((file) => ({
+            file,
+            ...DEFAULT_PRINT_SETTINGS
+        }));
         setFiles([...files, ...selectedFiles]);
         e.target.value = '';
     };
@@ -97,9 +101,9 @@ export default function App() {
         setFiles(updated);
     };
 
-    const updatePrintType = (index, type) => {
+    const updateFileOption = (index, field, value) => {
         const updated = [...files];
-        updated[index].printType = type;
+        updated[index][field] = value;
         setFiles(updated);
     };
 
@@ -120,17 +124,15 @@ export default function App() {
                 const metadata = {
                     customerName,
                     fileIndex: i + 1,
-                    totalFiles: files.length
+                    totalFiles: files.length,
+                    colorPages: item.colorPages || '',
+                    bwPages: item.bwPages || '',
+                    paperSize: item.paperSize || 'A4',
+                    orientation: item.orientation || 'portrait',
+                    copies: Number(item.copies || 1),
+                    duplex: item.duplex || 'simplex',
+                    scale: item.scale || 'fit'
                 };
-
-                if (item.isImage) {
-                    metadata.printType = item.printType;
-                    metadata.colorPages = item.printType === 'color' ? 'Full Image' : '';
-                    metadata.bwPages = item.printType === 'bw' ? 'Full Image' : '';
-                } else {
-                    metadata.colorPages = item.colorPages || '';
-                    metadata.bwPages = item.bwPages || '';
-                }
 
                 await window.transferClient.startFileTransfer(item.file, metadata);
                 await new Promise((resolve) => setTimeout(resolve, 400));
@@ -271,7 +273,7 @@ export default function App() {
                                         <div className="file-name">
                                             {item.file.name}
                                             <span className="file-type-badge">
-                                                {item.isImage ? 'Image' : 'Document'}
+                                                {item.file.type.startsWith('image/') ? 'Image' : 'Document'}
                                             </span>
                                             <button
                                                 onClick={() => deleteFile(i)}
@@ -281,50 +283,72 @@ export default function App() {
                                                 X
                                             </button>
                                         </div>
-                                        {item.isImage ? (
+                                        <>
+                                            <input
+                                                type="text"
+                                                placeholder="Color pages (e.g., 21,26-29)"
+                                                value={item.colorPages}
+                                                onChange={(e) => updateFilePages(i, 'colorPages', e.target.value)}
+                                                className="input-small"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="B&W pages (e.g., 10-20,22-25,30-40)"
+                                                value={item.bwPages}
+                                                onChange={(e) => updateFilePages(i, 'bwPages', e.target.value)}
+                                                className="input-small"
+                                            />
                                             <div className="print-type-selector">
-                                                <label className="print-type-label">Print Type:</label>
-                                                <div className="radio-group">
-                                                    <label className="radio-option">
-                                                        <input
-                                                            type="radio"
-                                                            name={`printType-${i}`}
-                                                            value="color"
-                                                            checked={item.printType === 'color'}
-                                                            onChange={() => updatePrintType(i, 'color')}
-                                                        />
-                                                        <span>Color</span>
-                                                    </label>
-                                                    <label className="radio-option">
-                                                        <input
-                                                            type="radio"
-                                                            name={`printType-${i}`}
-                                                            value="bw"
-                                                            checked={item.printType === 'bw'}
-                                                            onChange={() => updatePrintType(i, 'bw')}
-                                                        />
-                                                        <span>Black & White</span>
-                                                    </label>
-                                                </div>
+                                                <label className="print-type-label">Paper Size</label>
+                                                <select
+                                                    value={item.paperSize}
+                                                    onChange={(e) => updateFileOption(i, 'paperSize', e.target.value)}
+                                                    className="input-small"
+                                                >
+                                                    <option value="A4">A4</option>
+                                                    <option value="A3">A3</option>
+                                                    <option value="Letter">Letter</option>
+                                                    <option value="Legal">Legal</option>
+                                                </select>
+                                                <label className="print-type-label">Layout</label>
+                                                <select
+                                                    value={item.orientation}
+                                                    onChange={(e) => updateFileOption(i, 'orientation', e.target.value)}
+                                                    className="input-small"
+                                                >
+                                                    <option value="portrait">Portrait</option>
+                                                    <option value="landscape">Landscape</option>
+                                                </select>
+                                                <label className="print-type-label">Copies</label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="20"
+                                                    value={item.copies}
+                                                    onChange={(e) => updateFileOption(i, 'copies', e.target.value)}
+                                                    className="input-small"
+                                                />
+                                                <label className="print-type-label">Sides</label>
+                                                <select
+                                                    value={item.duplex}
+                                                    onChange={(e) => updateFileOption(i, 'duplex', e.target.value)}
+                                                    className="input-small"
+                                                >
+                                                    <option value="simplex">Single Side</option>
+                                                    <option value="long-edge">Double Side Long Edge</option>
+                                                    <option value="short-edge">Double Side Short Edge</option>
+                                                </select>
+                                                <label className="print-type-label">Scale</label>
+                                                <select
+                                                    value={item.scale}
+                                                    onChange={(e) => updateFileOption(i, 'scale', e.target.value)}
+                                                    className="input-small"
+                                                >
+                                                    <option value="fit">Fit to Page</option>
+                                                    <option value="actual">Actual Size</option>
+                                                </select>
                                             </div>
-                                        ) : (
-                                            <>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Color pages (e.g., 1-5,8,10)"
-                                                    value={item.colorPages}
-                                                    onChange={(e) => updateFilePages(i, 'colorPages', e.target.value)}
-                                                    className="input-small"
-                                                />
-                                                <input
-                                                    type="text"
-                                                    placeholder="B&W pages (e.g., 6-7,9)"
-                                                    value={item.bwPages}
-                                                    onChange={(e) => updateFilePages(i, 'bwPages', e.target.value)}
-                                                    className="input-small"
-                                                />
-                                            </>
-                                        )}
+                                        </>
                                     </div>
                                 ))}
                             </div>

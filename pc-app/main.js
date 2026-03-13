@@ -2,7 +2,6 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
-const ShopReceiver = require('./services/fileReceiver');
 const QRCode = require('qrcode');
 const pdfPrinter = require('pdf-to-printer');
 
@@ -10,16 +9,15 @@ loadLocalEnv(path.join(__dirname, '.env'));
 
 const store = new Store();
 let mainWindow;
-let shopReceiver;
 
 // Default to the deployed Worker backend; env vars can still override this.
 const DEFAULT_API_URL = 'https://print-app-backend.jayanthgopala21.workers.dev';
 const API_URL = process.env.API_URL || DEFAULT_API_URL;
 const WS_URL = process.env.WS_URL || API_URL.replace(/^http/, 'ws');
-console.log('PC app backend config:', { API_URL, WS_URL });
+log('PC app backend config:', { API_URL, WS_URL });
 
-process.on('uncaughtException', (err) => console.error('Uncaught:', err));
-process.on('unhandledRejection', (err) => console.error('Unhandled:', err));
+process.on('uncaughtException', (err) => log('Uncaught:', formatError(err)));
+process.on('unhandledRejection', (err) => log('Unhandled:', formatError(err)));
 
 function loadLocalEnv(envPath) {
     if (!fs.existsSync(envPath)) return;
@@ -39,6 +37,35 @@ function loadLocalEnv(envPath) {
     }
 }
 
+function getLogPath() {
+    try {
+        return path.join(app.getPath('userData'), 'pc-app.log');
+    } catch {
+        return path.join(__dirname, 'pc-app.log');
+    }
+}
+
+function formatError(error) {
+    if (!error) return '(empty)';
+    if (error instanceof Error) {
+        return `${error.message}\n${error.stack || ''}`.trim();
+    }
+    return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
+function log(...args) {
+    const line = `[${new Date().toISOString()}] ${args.map((arg) => {
+        if (typeof arg === 'string') return arg;
+        return formatError(arg);
+    }).join(' ')}\n`;
+
+    try {
+        fs.appendFileSync(getLogPath(), line);
+    } catch {}
+
+    console.log(...args);
+}
+
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
@@ -55,13 +82,13 @@ function createWindow() {
         mainWindow = null;
     });
     mainWindow.webContents.on('render-process-gone', (event, details) => {
-        console.error('Renderer process gone:', details);
+        log('Renderer process gone:', details);
     });
     mainWindow.webContents.on('unresponsive', () => {
-        console.error('Renderer became unresponsive');
+        log('Renderer became unresponsive');
     });
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-        console.error('Window load failed:', errorCode, errorDescription);
+        log('Window load failed:', { errorCode, errorDescription });
     });
 }
 
@@ -69,7 +96,10 @@ app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {});
 app.on('child-process-gone', (event, details) => {
-    console.error('Child process gone:', details);
+    log('Child process gone:', details);
+});
+app.on('before-quit', () => {
+    log('App quitting');
 });
 
 ipcMain.handle('get-settings', () => ({
@@ -88,7 +118,7 @@ ipcMain.handle('save-settings', async (event, settings) => {
     const colorPrice = parseFloat(settings.colorPrice);
     const bwPrice = parseFloat(settings.bwPrice);
     const password = settings.password || '';
-    console.log('Saving settings:', { shopId, colorPrice, bwPrice });
+    log('Saving settings:', { shopId, colorPrice, bwPrice });
     
     store.set('shopId', shopId);
     store.set('downloadPath', settings.downloadPath);
@@ -113,10 +143,10 @@ ipcMain.handle('save-settings', async (event, settings) => {
             const loginData = await loginResp.json();
             if (loginResp.ok && loginData.token) {
                 store.set('token', loginData.token);
-                console.log('Login successful');
+                log('Login successful');
             } else if (loginResp.status === 403) {
                 // Password not set on server: set it and retry
-                console.log('Password not set on server, attempting to set password...');
+                log('Password not set on server, attempting to set password...');
                 try {
                     const setResp = await fetch(`${API_URL}/shop/set-password`, {
                         method: 'POST',
@@ -133,32 +163,32 @@ ipcMain.handle('save-settings', async (event, settings) => {
                         const data2 = await r2.json();
                         if (r2.ok && data2.token) {
                             store.set('token', data2.token);
-                            console.log('Login successful after setting password');
+                            log('Login successful after setting password');
                         } else {
-                            console.error('Login failed after setting password', data2);
+                            log('Login failed after setting password', data2);
                             return { success: false, message: 'Login failed after setting password' };
                         }
                     } else {
                         const errText = await setResp.text();
-                        console.error('Set password failed:', errText);
+                        log('Set password failed:', errText);
                         return { success: false, message: 'Failed to set password' };
                     }
                 } catch (setErr) {
-                    console.error('Set password error:', setErr.message);
+                    log('Set password error:', setErr.message);
                     return { success: false, message: setErr.message };
                 }
             } else {
-                console.error('Login failed:', loginData);
+                log('Login failed:', loginData);
                 return { success: false, message: loginData.error || 'Invalid credentials' };
             }
         } catch (err) {
-            console.error('Login request failed:', err.message);
+            log('Login request failed:', err.message);
             return { success: false, message: err.message };
         }
 
         // Update prices in database (best-effort)
         if (colorPrice && bwPrice && shopId) {
-            console.log('Updating database prices...');
+            log('Updating database prices...');
             try {
                 const updateResp = await fetch(`${API_URL}/shop/update-prices`, {
                     method: 'POST',
@@ -172,10 +202,10 @@ ipcMain.handle('save-settings', async (event, settings) => {
 
                 if (updateResp.ok) {
                     const updateData = await updateResp.json();
-                    console.log('Database updated:', updateData);
+                    log('Database updated:', updateData);
                 }
             } catch (dbError) {
-                console.error('Database update failed (continuing anyway):', dbError.message);
+                log('Database update failed (continuing anyway):', dbError.message);
             }
         }
 
@@ -224,20 +254,55 @@ ipcMain.handle('start-service', () => {
         return { success: false, message: 'Missing credentials' };
     }
 
+    return {
+        success: true,
+        config: {
+            shopId,
+            token,
+            downloadPath,
+            wsUrl: WS_URL
+        }
+    };
+});
+
+ipcMain.handle('save-received-file', async (event, payload) => {
     try {
-        if (shopReceiver) {
-            shopReceiver.disconnect();
+        const fileName = payload?.fileName || '';
+        const bytes = payload?.bytes;
+        const shopId = payload?.shopId || store.get('shopId');
+        const downloadPath = store.get('downloadPath', app.getPath('downloads'));
+
+        if (!fileName || !bytes) {
+            return { success: false, message: 'Missing file payload' };
         }
 
-        shopReceiver = new ShopReceiver(shopId, token, WS_URL, downloadPath, (order) => {
-            if (mainWindow) {
-                mainWindow.webContents.send('file-received', order);
-            }
-        });
-        shopReceiver.connect();
+        const buffer = Buffer.from(bytes);
+        const filePath = saveReceivedFile(downloadPath, fileName, buffer);
+        const order = {
+            customerName: payload?.customerName || 'Unknown',
+            fileName,
+            filePath,
+            colorPages: payload?.colorPages || '',
+            bwPages: payload?.bwPages || '',
+            paperSize: payload?.paperSize || 'A4',
+            orientation: payload?.orientation || 'portrait',
+            copies: Math.max(1, Number(payload?.copies || 1)),
+            duplex: payload?.duplex || 'simplex',
+            scale: payload?.scale || 'fit',
+            fileIndex: payload?.fileIndex || 1,
+            totalFiles: payload?.totalFiles || 1,
+            shopId
+        };
 
-        return { success: true };
+        log('Saved received file:', order);
+
+        if (mainWindow) {
+            mainWindow.webContents.send('file-received', order);
+        }
+
+        return { success: true, filePath };
     } catch (error) {
+        log('save-received-file failed:', formatError(error));
         return { success: false, message: error.message };
     }
 });
@@ -247,8 +312,13 @@ ipcMain.handle('print-file', async (event, filePath, options) => {
         const normalizedPath = path.normalize(filePath);
         const printerName = options.printerName || '';
         const pageRanges = options.pageRanges || '';
+        const paperSize = options.paperSize || 'A4';
+        const orientation = options.orientation || 'portrait';
+        const copies = Math.max(1, Number(options.copies || 1));
+        const duplex = options.duplex || 'simplex';
+        const scale = options.scale || 'fit';
         
-        console.log(`Printing to ${printerName}: ${normalizedPath}, Pages: ${pageRanges || 'all'}`);
+        console.log(`Printing to ${printerName}: ${normalizedPath}, Pages: ${pageRanges || 'all'}, Paper: ${paperSize}, Layout: ${orientation}, Copies: ${copies}, Duplex: ${duplex}, Scale: ${scale}`);
         
         if (!fs.existsSync(normalizedPath)) {
             return { success: false, message: 'File not found' };
@@ -260,7 +330,8 @@ ipcMain.handle('print-file', async (event, filePath, options) => {
         if (ext === '.pdf') {
             try {
                 const printOptions = {
-                    printer: printerName
+                    printer: printerName,
+                    copies
                 };
                 
                 // Add page ranges if specified (format: "1-3,5,7-9")
@@ -271,6 +342,19 @@ ipcMain.handle('print-file', async (event, filePath, options) => {
                     console.log('Original page ranges:', pageRanges);
                     console.log('Cleaned page ranges:', cleanedPages);
                     console.log('Printing to:', printerName);
+                }
+
+                printOptions.paperSize = paperSize;
+                if (orientation === 'landscape') {
+                    printOptions.landscape = true;
+                }
+                if (duplex === 'long-edge') {
+                    printOptions.side = 'duplexlong';
+                } else if (duplex === 'short-edge') {
+                    printOptions.side = 'duplexshort';
+                }
+                if (scale === 'actual') {
+                    printOptions.scale = 'noscale';
                 }
                 
                 console.log('Print options:', JSON.stringify(printOptions));
@@ -306,7 +390,10 @@ ipcMain.handle('print-file', async (event, filePath, options) => {
                 printBackground: true,
                 deviceName: printerName,
                 color: options.isColor !== false,
-                margins: { marginType: 'default' }
+                margins: { marginType: 'default' },
+                landscape: orientation === 'landscape',
+                copies,
+                pageSize: paperSize
             }, (success, errorType) => {
                 printWindow.close();
                 if (!success) {
@@ -322,3 +409,20 @@ ipcMain.handle('print-file', async (event, filePath, options) => {
         return { success: false, message: error.message };
     }
 });
+
+function saveReceivedFile(downloadPath, filename, buffer) {
+    const originalName = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const dir = downloadPath || path.join(process.cwd(), 'downloads');
+    const parsed = path.parse(originalName);
+    let candidate = path.join(dir, originalName);
+    let counter = 1;
+
+    fs.mkdirSync(dir, { recursive: true });
+    while (fs.existsSync(candidate)) {
+        candidate = path.join(dir, `${parsed.name}_${counter}${parsed.ext}`);
+        counter += 1;
+    }
+
+    fs.writeFileSync(candidate, buffer);
+    return path.normalize(candidate);
+}

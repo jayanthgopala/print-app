@@ -5,6 +5,301 @@ let bwPrice = 0;
 let currentPrintJob = null;
 let colorPrinter = '';
 let bwPrinter = '';
+let receiverService = null;
+
+class ShopReceiverClient {
+    constructor({ shopId, token, wsUrl, onStatusChange, onFileReceived, onLog }) {
+        this.shopId = shopId;
+        this.token = token;
+        this.wsUrl = wsUrl;
+        this.onStatusChange = onStatusChange;
+        this.onFileReceived = onFileReceived;
+        this.onLog = onLog || (() => {});
+        this.ws = null;
+        this.shouldReconnect = true;
+        this.transfers = new Map();
+    }
+
+    log(...args) {
+        console.log('[RendererReceiver]', ...args);
+        this.onLog(...args);
+    }
+
+    connect() {
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
+
+        this.shouldReconnect = true;
+        this.ws = new WebSocket(this.wsUrl);
+
+        this.ws.onopen = () => {
+            this.log('Connected to signaling');
+            this.onStatusChange('ONLINE');
+            this.ws.send(JSON.stringify({ type: 'REGISTER_SHOP', token: this.token }));
+        };
+
+        this.ws.onmessage = async (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                if (message.type === 'REGISTER_SUCCESS') {
+                    this.log('Shop registered');
+                    this.onStatusChange('ONLINE');
+                    return;
+                }
+
+                if (message.type === 'REGISTER_FAILED') {
+                    this.log('Register failed', message);
+                    this.onStatusChange('OFFLINE');
+                    return;
+                }
+
+                if (message.type === 'WEBRTC_OFFER') {
+                    await this.handleOffer(message);
+                    return;
+                }
+
+                if (message.type === 'ICE_CANDIDATE') {
+                    await this.handleRemoteIce(message);
+                }
+            } catch (error) {
+                this.log('Message handling error', error);
+            }
+        };
+
+        this.ws.onerror = (error) => {
+            this.log('WebSocket error', error);
+            this.onStatusChange('OFFLINE');
+        };
+
+        this.ws.onclose = () => {
+            this.log('WebSocket closed');
+            this.onStatusChange('OFFLINE');
+            for (const transferId of this.transfers.keys()) {
+                this.cleanupTransfer(transferId);
+            }
+            if (this.shouldReconnect) {
+                setTimeout(() => this.connect(), 3000);
+            }
+        };
+    }
+
+    disconnect() {
+        this.shouldReconnect = false;
+        for (const transferId of this.transfers.keys()) {
+            this.cleanupTransfer(transferId);
+        }
+        if (this.ws) {
+            this.ws.close();
+            this.ws = null;
+        }
+    }
+
+    async handleOffer(message) {
+        const { transferId, clientId, offer, metadata } = message;
+        this.validateMetadata(metadata);
+
+        const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        const transfer = {
+            transferId,
+            clientId,
+            metadata: null,
+            peer,
+            channel: null,
+            chunks: [],
+            bytesReceived: 0,
+            completed: false
+        };
+        this.transfers.set(transferId, transfer);
+
+        peer.onicecandidate = (event) => {
+            if (!event.candidate || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+            this.ws.send(JSON.stringify({
+                type: 'ICE_CANDIDATE',
+                transferId,
+                candidate: event.candidate
+            }));
+        };
+
+        peer.onconnectionstatechange = () => {
+            if (transfer.completed) return;
+            if (['failed', 'disconnected', 'closed'].includes(peer.connectionState)) {
+                this.failTransfer(transferId, `Peer connection ${peer.connectionState}`);
+            }
+        };
+
+        peer.ondatachannel = (event) => {
+            transfer.channel = event.channel;
+            event.channel.binaryType = 'arraybuffer';
+            event.channel.onmessage = (msg) => this.handleChannelMessage(transferId, msg.data);
+            event.channel.onerror = () => this.failTransfer(transferId, 'Data channel error');
+            event.channel.onclose = () => {
+                if (!transfer.completed) {
+                    this.failTransfer(transferId, 'Data channel closed');
+                }
+            };
+        };
+
+        await peer.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+
+        this.ws.send(JSON.stringify({
+            type: 'WEBRTC_ANSWER',
+            transferId,
+            answer: peer.localDescription
+        }));
+    }
+
+    async handleRemoteIce(message) {
+        const transfer = this.transfers.get(message.transferId);
+        if (!transfer || !message.candidate) return;
+        try {
+            await transfer.peer.addIceCandidate(new RTCIceCandidate(message.candidate));
+        } catch (error) {
+            this.log('ICE add failed', error);
+            this.failTransfer(message.transferId, 'ICE candidate rejected');
+        }
+    }
+
+    handleChannelMessage(transferId, data) {
+        const transfer = this.transfers.get(transferId);
+        if (!transfer) return;
+
+        if (typeof data === 'string') {
+            const message = JSON.parse(data);
+            if (message.type === 'FILE_METADATA') {
+                this.validateMetadata(message.metadata);
+                transfer.metadata = message.metadata;
+                this.notifyTransferState(transferId, 'RECEIVING');
+                return;
+            }
+
+            if (message.type === 'FILE_COMPLETE') {
+                void this.finalizeTransfer(transferId);
+            }
+            return;
+        }
+
+        const chunk = new Uint8Array(data);
+        transfer.bytesReceived += chunk.byteLength;
+        if (transfer.bytesReceived > 100 * 1024 * 1024) {
+            this.failTransfer(transferId, 'File too large');
+            return;
+        }
+        transfer.chunks.push(chunk);
+    }
+
+    async finalizeTransfer(transferId) {
+        const transfer = this.transfers.get(transferId);
+        if (!transfer || !transfer.metadata) {
+            this.failTransfer(transferId, 'Missing file metadata');
+            return;
+        }
+
+        try {
+            if (transfer.bytesReceived !== Number(transfer.metadata.fileSize)) {
+                throw new Error('Incomplete file received');
+            }
+
+            const bytes = new Uint8Array(transfer.bytesReceived);
+            let offset = 0;
+            for (const chunk of transfer.chunks) {
+                bytes.set(chunk, offset);
+                offset += chunk.byteLength;
+            }
+
+            const saveResult = await window.electronAPI.saveReceivedFile({
+                shopId: this.shopId,
+                fileName: transfer.metadata.fileName,
+                bytes,
+                customerName: transfer.metadata.customerName || 'Unknown',
+                colorPages: transfer.metadata.colorPages || '',
+                bwPages: transfer.metadata.bwPages || '',
+                paperSize: transfer.metadata.paperSize || 'A4',
+                orientation: transfer.metadata.orientation || 'portrait',
+                copies: Number(transfer.metadata.copies || 1),
+                duplex: transfer.metadata.duplex || 'simplex',
+                scale: transfer.metadata.scale || 'fit',
+                fileIndex: transfer.metadata.fileIndex || 1,
+                totalFiles: transfer.metadata.totalFiles || 1
+            });
+
+            if (!saveResult.success) {
+                throw new Error(saveResult.message || 'Save failed');
+            }
+
+            transfer.completed = true;
+            if (transfer.channel && transfer.channel.readyState === 'open') {
+                transfer.channel.send(JSON.stringify({ type: 'FILE_RECEIVED' }));
+            }
+            this.notifyTransferState(transferId, 'COMPLETED');
+            this.onFileReceived({
+                customerName: transfer.metadata.customerName || 'Unknown',
+                fileName: transfer.metadata.fileName,
+                filePath: saveResult.filePath,
+                colorPages: transfer.metadata.colorPages || '',
+                bwPages: transfer.metadata.bwPages || '',
+                paperSize: transfer.metadata.paperSize || 'A4',
+                orientation: transfer.metadata.orientation || 'portrait',
+                copies: Number(transfer.metadata.copies || 1),
+                duplex: transfer.metadata.duplex || 'simplex',
+                scale: transfer.metadata.scale || 'fit',
+                fileIndex: transfer.metadata.fileIndex || 1,
+                totalFiles: transfer.metadata.totalFiles || 1
+            });
+            setTimeout(() => this.cleanupTransfer(transferId), 1500);
+        } catch (error) {
+            this.log('Finalize transfer failed', error);
+            this.failTransfer(transferId, error.message || 'Save failed');
+        }
+    }
+
+    validateMetadata(metadata = {}) {
+        const fileName = String(metadata.fileName || '').trim();
+        const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
+        const allowedExtensions = new Set(['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']);
+        const fileSize = Number(metadata.fileSize || 0);
+
+        if (!fileName || !allowedExtensions.has(ext)) {
+            throw new Error('Unsupported file type');
+        }
+
+        if (!Number.isFinite(fileSize) || fileSize <= 0 || fileSize > 100 * 1024 * 1024) {
+            throw new Error('Invalid file size');
+        }
+    }
+
+    notifyTransferState(transferId, state, details = null) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({ type: 'TRANSFER_STATE', transferId, state, details }));
+    }
+
+    failTransfer(transferId, reason) {
+        const transfer = this.transfers.get(transferId);
+        if (!transfer) {
+            this.cleanupTransfer(transferId);
+            return;
+        }
+        if (transfer.channel && transfer.channel.readyState === 'open') {
+            transfer.channel.send(JSON.stringify({ type: 'TRANSFER_ERROR', reason }));
+        }
+        this.notifyTransferState(transferId, 'FAILED', reason);
+        this.cleanupTransfer(transferId);
+    }
+
+    cleanupTransfer(transferId) {
+        const transfer = this.transfers.get(transferId);
+        if (!transfer) return;
+        try {
+            transfer.channel?.close();
+        } catch {}
+        try {
+            transfer.peer?.close();
+        } catch {}
+        this.transfers.delete(transferId);
+    }
+}
 
 window.addEventListener('DOMContentLoaded', async () => {
     const settings = await window.electronAPI.getSettings();
@@ -29,6 +324,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     await loadPrinters();
 
     window.electronAPI.onFileReceived((order) => {
+        if (orders.some(existing => existing.filePath === order.filePath)) {
+            return;
+        }
         const orderId = Date.now();
         const orderWithId = { ...order, id: orderId, timestamp: new Date().toLocaleString(), printed: false, skipped: false };
         orders.push(orderWithId);
@@ -164,6 +462,19 @@ async function saveAndStart() {
         clearMessage();
         document.getElementById('statusBadge').textContent = 'Online';
         document.getElementById('statusBadge').className = 'status online';
+        if (receiverService) {
+            receiverService.disconnect();
+        }
+        receiverService = new ShopReceiverClient({
+            ...result.config,
+            onStatusChange: (status) => {
+                document.getElementById('statusBadge').textContent = status === 'ONLINE' ? 'Online' : 'Offline';
+                document.getElementById('statusBadge').className = `status ${status === 'ONLINE' ? 'online' : 'offline'}`;
+            },
+            onFileReceived: () => {},
+            onLog: (...args) => console.log(...args)
+        });
+        receiverService.connect();
     } else {
         showMessage('Error: ' + result.message, 'error');
     }
@@ -256,6 +567,8 @@ function renderOrders() {
                                 <div><strong>File:</strong> ${escapeHtml(order.fileName)}</div>
                                 ${order.colorPages ? `<div style="font-size:13px;"><strong>Color Pages:</strong> ${escapeHtml(order.colorPages)} (@ ₹${colorPrice}/page)</div>` : ''}
                                 ${order.bwPages ? `<div style="font-size:13px;"><strong>B&W Pages:</strong> ${escapeHtml(order.bwPages)} (@ ₹${bwPrice}/page)</div>` : ''}
+                                <div style="font-size:13px;"><strong>Paper:</strong> ${escapeHtml(order.paperSize || 'A4')} | <strong>Layout:</strong> ${escapeHtml(order.orientation || 'portrait')} | <strong>Copies:</strong> ${escapeHtml(order.copies || 1)}</div>
+                                <div style="font-size:13px;"><strong>Sides:</strong> ${escapeHtml(order.duplex || 'simplex')} | <strong>Scale:</strong> ${escapeHtml(order.scale || 'fit')}</div>
                             </div>
                             <button class="print-btn" data-filepath="${escapeHtml(order.filePath)}" data-orderid="${order.id}" onclick="printFileFromButton(this)" ${order.printed ? 'disabled' : ''}>
                                 ${order.printed ? '✓ Printed' : '🖨️ Print'}
@@ -326,6 +639,38 @@ async function printFileFromButton(button) {
                    style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
             <div style="margin-top: 5px; color: #666; font-size: 12px;">Printer: ${bwPrinter || 'Not set'}</div>
         </div>
+        <div style="margin-top: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: 600;">Paper Size:</label>
+            <select id="editPaperSize" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
+                ${['A4', 'A3', 'Letter', 'Legal'].map((size) => `<option value="${size}" ${order.paperSize === size ? 'selected' : ''}>${size}</option>`).join('')}
+            </select>
+        </div>
+        <div style="margin-top: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: 600;">Layout:</label>
+            <select id="editOrientation" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
+                <option value="portrait" ${order.orientation !== 'landscape' ? 'selected' : ''}>Portrait</option>
+                <option value="landscape" ${order.orientation === 'landscape' ? 'selected' : ''}>Landscape</option>
+            </select>
+        </div>
+        <div style="margin-top: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: 600;">Copies:</label>
+            <input type="number" id="editCopies" min="1" max="20" value="${escapeHtml(order.copies || 1)}" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
+        </div>
+        <div style="margin-top: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: 600;">Sides:</label>
+            <select id="editDuplex" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
+                <option value="simplex" ${(order.duplex || 'simplex') === 'simplex' ? 'selected' : ''}>Single Side</option>
+                <option value="long-edge" ${order.duplex === 'long-edge' ? 'selected' : ''}>Double Side Long Edge</option>
+                <option value="short-edge" ${order.duplex === 'short-edge' ? 'selected' : ''}>Double Side Short Edge</option>
+            </select>
+        </div>
+        <div style="margin-top: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: 600;">Scale:</label>
+            <select id="editScale" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
+                <option value="fit" ${(order.scale || 'fit') === 'fit' ? 'selected' : ''}>Fit to Page</option>
+                <option value="actual" ${order.scale === 'actual' ? 'selected' : ''}>Actual Size</option>
+            </select>
+        </div>
     `;
     
     modal.style.display = 'flex';
@@ -339,10 +684,22 @@ async function confirmPrint() {
     // Get edited page ranges
     const colorPages = document.getElementById('editColorPages').value.trim();
     const bwPages = document.getElementById('editBWPages').value.trim();
+    const paperSize = document.getElementById('editPaperSize').value;
+    const orientation = document.getElementById('editOrientation').value;
+    const copies = Math.max(1, parseInt(document.getElementById('editCopies').value || '1', 10));
+    const duplex = document.getElementById('editDuplex').value;
+    const scale = document.getElementById('editScale').value;
     
     if (!colorPages && !bwPages) {
         alert('Please specify at least color pages or B&W pages');
         return;
+    }
+
+    if (paperSize !== 'A4') {
+        const proceed = confirm(`Warning: this job is set to ${paperSize}, not A4. Make sure ${paperSize} paper is loaded before printing. Continue?`);
+        if (!proceed) {
+            return;
+        }
     }
     
     try {
@@ -353,7 +710,12 @@ async function confirmPrint() {
             const result = await window.electronAPI.printFile(filePath, {
                 printerName: colorPrinter,
                 isColor: true,
-                pageRanges: colorPages
+                pageRanges: colorPages,
+                paperSize,
+                orientation,
+                copies,
+                duplex,
+                scale
             });
             results.push(`Color pages (${colorPages}): ${result.success ? 'Sent to printer' : result.message}`);
         }
@@ -363,7 +725,12 @@ async function confirmPrint() {
             const result = await window.electronAPI.printFile(filePath, {
                 printerName: bwPrinter,
                 isColor: false,
-                pageRanges: bwPages
+                pageRanges: bwPages,
+                paperSize,
+                orientation,
+                copies,
+                duplex,
+                scale
             });
             results.push(`B&W pages (${bwPages}): ${result.success ? 'Sent to printer' : result.message}`);
         }

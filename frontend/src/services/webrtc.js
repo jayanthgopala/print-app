@@ -148,6 +148,11 @@ export class FileTransferClient {
                         customerName: metadata.customerName || 'Unknown',
                         colorPages: metadata.colorPages || '',
                         bwPages: metadata.bwPages || '',
+                        paperSize: metadata.paperSize || 'A4',
+                        orientation: metadata.orientation || 'portrait',
+                        copies: Number(metadata.copies || 1),
+                        duplex: metadata.duplex || 'simplex',
+                        scale: metadata.scale || 'fit',
                         fileIndex: metadata.fileIndex || 1,
                         totalFiles: metadata.totalFiles || 1,
                         printType: metadata.printType || ''

@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     selectFolder: () => ipcRenderer.invoke('select-folder'),
     generateQR: (shopId) => ipcRenderer.invoke('generate-qr', shopId),
     startService: () => ipcRenderer.invoke('start-service'),
+    saveReceivedFile: (payload) => ipcRenderer.invoke('save-received-file', payload),
     getPrinters: () => ipcRenderer.invoke('get-printers'),
     printFile: (filePath, options) => ipcRenderer.invoke('print-file', filePath, options),
     onFileReceived: (callback) => ipcRenderer.on('file-received', (event, data) => callback(data))

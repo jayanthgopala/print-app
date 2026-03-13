@@ -19,6 +19,10 @@ class ShopReceiver {
         this.transfers = new Map();
     }
 
+    log(...args) {
+        console.log('[ShopReceiver]', ...args);
+    }
+
     disconnect() {
         this.shouldReconnect = false;
         for (const transferId of this.transfers.keys()) {
@@ -37,7 +41,7 @@ class ShopReceiver {
         this.ws = new WebSocket(this.signalingUrl);
 
         this.ws.on('open', () => {
-            console.log('Connected to signaling');
+            this.log('Connected to signaling');
             this.ws.send(JSON.stringify({ type: 'REGISTER_SHOP', token: this.token }));
         });
 
@@ -45,21 +49,21 @@ class ShopReceiver {
             try {
                 const message = JSON.parse(rawData.toString());
                 if (message.type === 'REGISTER_SUCCESS') {
-                    console.log('Shop registered');
+                    this.log('Shop registered');
                 } else if (message.type === 'WEBRTC_OFFER') {
                     await this.handleOffer(message);
                 } else if (message.type === 'ICE_CANDIDATE') {
                     await this.handleRemoteIce(message);
                 }
             } catch (error) {
-                console.error('Parse error:', error);
+                this.log('Parse error:', error);
             }
         });
 
-        this.ws.on('error', (err) => console.error('WS error:', err));
+        this.ws.on('error', (err) => this.log('WS error:', err));
 
         this.ws.on('close', () => {
-            console.log('WS closed');
+            this.log('WS closed');
             for (const transferId of this.transfers.keys()) {
                 this.cleanupTransfer(transferId);
             }
@@ -125,7 +129,7 @@ class ShopReceiver {
                 answer: peer.localDescription
             }));
         } catch (error) {
-            console.error('Offer handling failed:', error);
+            this.log('Offer handling failed:', error);
             this.failTransfer(transferId, error.message || 'Offer handling failed');
         }
     }
@@ -137,7 +141,7 @@ class ShopReceiver {
         try {
             await transfer.peer.addIceCandidate(new wrtc.RTCIceCandidate(message.candidate));
         } catch (error) {
-            console.error('ICE add failed:', error);
+            this.log('ICE add failed:', error);
             this.failTransfer(message.transferId, 'ICE candidate rejected');
         }
     }
@@ -200,15 +204,17 @@ class ShopReceiver {
             }
 
             transfer.completed = true;
+            this.log('Transfer completed:', { transferId, filePath, bytesReceived: transfer.bytesReceived });
 
             if (transfer.channel && transfer.channel.readyState === 'open') {
                 transfer.channel.send(JSON.stringify({ type: 'FILE_RECEIVED' }));
             }
 
             this.notifyTransferState(transferId, 'COMPLETED');
-            setTimeout(() => this.cleanupTransfer(transferId), 250);
+            // Let the remote peer react to FILE_RECEIVED before tearing down native WebRTC objects.
+            setTimeout(() => this.cleanupTransfer(transferId), 2000);
         } catch (error) {
-            console.error('Finalize transfer failed:', error);
+            this.log('Finalize transfer failed:', error);
             this.failTransfer(transferId, error.message || 'Save failed');
         }
     }
@@ -240,7 +246,7 @@ class ShopReceiver {
         }
 
         fs.writeFileSync(candidate, buffer);
-        console.log(`Saved to: ${candidate}`);
+        this.log(`Saved to: ${candidate}`);
         return path.normalize(candidate);
     }
 
@@ -280,12 +286,12 @@ class ShopReceiver {
                     transfer.channel.onmessage = null;
                     transfer.channel.onerror = null;
                     transfer.channel.onclose = null;
-                    if (transfer.channel.readyState !== 'closed') {
+                    if (!transfer.completed && transfer.channel.readyState !== 'closed') {
                         transfer.channel.close();
                     }
                 }
             } catch (error) {
-                console.error('Channel cleanup failed:', error);
+                this.log('Channel cleanup failed:', error);
             }
 
             try {
@@ -293,16 +299,16 @@ class ShopReceiver {
                     transfer.peer.onicecandidate = null;
                     transfer.peer.onconnectionstatechange = null;
                     transfer.peer.ondatachannel = null;
-                    if (transfer.peer.signalingState !== 'closed') {
+                    if (!transfer.completed && transfer.peer.signalingState !== 'closed') {
                         transfer.peer.close();
                     }
                 }
             } catch (error) {
-                console.error('Peer cleanup failed:', error);
+                this.log('Peer cleanup failed:', error);
             }
 
             finish();
-        }, transfer.completed ? 500 : 0);
+        }, transfer.completed ? 3000 : 0);
     }
 }
 
