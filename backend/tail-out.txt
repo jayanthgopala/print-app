@@ -1,0 +1,5 @@
+
+ ⛅️ wrangler 4.72.0
+───────────────────
+Successfully created tail, expires at 2026-03-13T09:40:25Z
+Connected to print-app-backend, waiting for logs...

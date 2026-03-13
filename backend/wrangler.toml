@@ -10,7 +10,7 @@ bindings = [
 [[d1_databases]]
 binding = "DB"
 database_name = "print_app"
-database_id = "db6e71f1-acd1-438d-9f2a-5871b084187c"
+database_id = "1bb32ee3-c86a-41a3-8e27-2e3307f9e3d6"
 
 [[migrations]]
 tag = "v1"
