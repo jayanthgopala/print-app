@@ -407,7 +407,7 @@ ipcMain.handle('print-file', async (event, filePath, options) => {
     try {
         const normalizedPath = path.normalize(filePath);
         const printerName = options.printerName || '';
-        const pageRanges = options.pageRanges || '';
+        const pageRanges = normalizePageRanges(options.pageRanges || '');
         const paperSize = options.paperSize || 'A4';
         const orientation = options.orientation || 'portrait';
         const copies = Math.max(1, Number(options.copies || 1));
@@ -531,4 +531,16 @@ function escapeHtmlForHtml(text) {
         '"': '&quot;',
         "'": '&#039;'
     }[match]));
+}
+
+function normalizePageRanges(value) {
+    const normalized = String(value || '').trim();
+    if (!normalized) return '';
+
+    const lowered = normalized.toLowerCase();
+    if (lowered === 'all pages' || lowered === 'full image' || lowered === 'all' || lowered === 'all_pages') {
+        return '';
+    }
+
+    return normalized;
 }

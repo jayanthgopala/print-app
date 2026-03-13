@@ -714,13 +714,15 @@ async function confirmPrint() {
     // Get edited page ranges
     const colorPages = document.getElementById('editColorPages').value.trim();
     const bwPages = document.getElementById('editBWPages').value.trim();
+    const normalizedColorPages = normalizePrintSelection(colorPages);
+    const normalizedBWPages = normalizePrintSelection(bwPages);
     const paperSize = document.getElementById('editPaperSize').value;
     const orientation = document.getElementById('editOrientation').value;
     const copies = Math.max(1, parseInt(document.getElementById('editCopies').value || '1', 10));
     const duplex = document.getElementById('editDuplex').value;
     const scale = document.getElementById('editScale').value;
     
-    if (!colorPages && !bwPages) {
+    if (!normalizedColorPages && !normalizedBWPages) {
         alert('Please specify at least color pages or B&W pages');
         return;
     }
@@ -736,38 +738,37 @@ async function confirmPrint() {
         const results = [];
         
         // Print color pages if specified
-        if (colorPages && colorPrinter) {
+        if (normalizedColorPages && colorPrinter) {
             const result = await window.electronAPI.printFile(filePath, {
                 printerName: colorPrinter,
                 isColor: true,
-                pageRanges: colorPages,
+                pageRanges: normalizedColorPages,
                 paperSize,
                 orientation,
                 copies,
                 duplex,
                 scale
             });
-            results.push(`Color pages (${colorPages}): ${result.success ? 'Sent to printer' : result.message}`);
+            results.push(`Color ${describePrintSelection(normalizedColorPages)}: ${result.success ? 'Sent to printer' : result.message}`);
         }
         
         // Print B&W pages if specified
-        if (bwPages && bwPrinter) {
+        if (normalizedBWPages && bwPrinter) {
             const result = await window.electronAPI.printFile(filePath, {
                 printerName: bwPrinter,
                 isColor: false,
-                pageRanges: bwPages,
+                pageRanges: normalizedBWPages,
                 paperSize,
                 orientation,
                 copies,
                 duplex,
                 scale
             });
-            results.push(`B&W pages (${bwPages}): ${result.success ? 'Sent to printer' : result.message}`);
+            results.push(`B&W ${describePrintSelection(normalizedBWPages)}: ${result.success ? 'Sent to printer' : result.message}`);
         }
         
         // Show results
         if (results.length > 0) {
-            const totalPages = (colorPages ? colorPages.split(',').length : 0) + (bwPages ? bwPages.split(',').length : 0);
             alert('Print Job Queued!\n\n' + results.join('\n') + '\n\n⏳ Large print jobs may take a few minutes to process.\nYou can continue working while printing happens in the background.');
             
             // Mark order as printed
@@ -790,6 +791,26 @@ function convertPageRangesToElectron(pageStr) {
     // Convert "1-5,8,10" format to Electron format
     // For now, return as-is since Electron supports this format
     return pageStr.replace(/\s/g, '');
+}
+
+function normalizePrintSelection(value) {
+    const normalized = String(value || '').trim();
+    if (!normalized) return '';
+
+    const lowered = normalized.toLowerCase();
+    if (lowered === 'all pages' || lowered === 'full image' || lowered === 'all') {
+        return 'ALL_PAGES';
+    }
+
+    return normalized;
+}
+
+function describePrintSelection(value) {
+    if (value === 'ALL_PAGES') {
+        return 'pages (all)';
+    }
+
+    return `pages (${value})`;
 }
 
 function closePrintModal() {
