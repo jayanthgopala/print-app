@@ -5,32 +5,139 @@
     <title>Print Shop Manager</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 30px; border-radius: 15px; margin-bottom: 20px; }
-        .settings { background: white; padding: 25px; border-radius: 15px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .input-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: 600; color: #333; }
-        input { width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; }
-        button { padding: 12px 24px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; margin-right: 10px; }
-        button:hover { background: #5568d3; }
-        .status { display: inline-block; padding: 8px 16px; border-radius: 20px; font-weight: 600; margin-left: 15px; }
+        :root {
+            --bg: #eef2f6;
+            --panel: #ffffff;
+            --panel-soft: #f8fafc;
+            --line: #d9e2ec;
+            --text: #18212f;
+            --muted: #607086;
+            --brand-start: #1f6feb;
+            --brand-end: #0f9d8a;
+            --success-bg: #dff6e8;
+            --success-text: #155b2d;
+            --danger-bg: #fde7ea;
+            --danger-text: #842029;
+            --shadow: 0 18px 40px rgba(22, 34, 51, 0.08);
+        }
+        body {
+            font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(31, 111, 235, 0.08), transparent 32%),
+                radial-gradient(circle at top right, rgba(15, 157, 138, 0.10), transparent 28%),
+                linear-gradient(180deg, #f7fafc 0%, var(--bg) 100%);
+            color: var(--text);
+        }
+        .container { max-width: 1280px; margin: 0 auto; padding: 28px; }
+        .header {
+            background: linear-gradient(135deg, var(--brand-start), var(--brand-end));
+            color: white;
+            padding: 32px;
+            border-radius: 24px;
+            margin-bottom: 22px;
+            box-shadow: var(--shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }
+        .header h1 {
+            font-size: 32px;
+            letter-spacing: -0.02em;
+        }
+        .settings, .orders, .qr-section {
+            background: var(--panel);
+            padding: 26px;
+            border-radius: 22px;
+            margin-bottom: 22px;
+            box-shadow: var(--shadow);
+            border: 1px solid rgba(217, 226, 236, 0.9);
+        }
+        .settings h2, .orders h2, .qr-section h3 {
+            margin-bottom: 18px;
+            font-size: 22px;
+            letter-spacing: -0.02em;
+        }
+        .input-group { margin-bottom: 16px; }
+        label { display: block; margin-bottom: 7px; font-weight: 700; color: var(--text); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+        input, select {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            font-size: 14px;
+            background: var(--panel-soft);
+            color: var(--text);
+            transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #7aa7ff;
+            background: #fff;
+            box-shadow: 0 0 0 4px rgba(31, 111, 235, 0.12);
+        }
+        button {
+            padding: 12px 20px;
+            background: linear-gradient(135deg, var(--brand-start), #2458b8);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 700;
+            margin-right: 10px;
+            box-shadow: 0 10px 20px rgba(31, 111, 235, 0.16);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+        }
+        button:hover { transform: translateY(-1px); box-shadow: 0 14px 26px rgba(31, 111, 235, 0.20); }
+        button:active { transform: translateY(0); }
+        .status { display: inline-block; padding: 9px 18px; border-radius: 999px; font-weight: 700; margin-left: 15px; font-size: 13px; letter-spacing: 0.03em; }
         .status.online { background: #d4edda; color: #155724; }
         .status.offline { background: #f8d7da; color: #721c24; }
-        .orders { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .order-item { background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 15px; border-left: 4px solid #667eea; }
-        .customer-group { background: #fff; padding: 20px; border-radius: 10px; margin-bottom: 20px; border: 2px solid #667eea; }
-        .customer-header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
-        .btn-skip { background: #ffc107; color: #000; padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .order-item {
+            background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+            padding: 20px;
+            border-radius: 16px;
+            margin-bottom: 14px;
+            border: 1px solid #dbe6f3;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+        }
+        .customer-group {
+            background: #fff;
+            padding: 18px;
+            border-radius: 18px;
+            margin-bottom: 20px;
+            border: 1px solid #d8e4f1;
+            box-shadow: 0 10px 24px rgba(16, 24, 40, 0.05);
+        }
+        .customer-header {
+            background: linear-gradient(135deg, #233554, #1f6feb);
+            color: white;
+            padding: 15px 18px;
+            border-radius: 14px;
+            margin-bottom: 15px;
+            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .btn-skip { background: #ffc107; color: #000; padding: 8px 16px; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: none; }
         .btn-skip:hover { background: #ffb300; }
-        .order-header { display: flex; justify-content: space-between; margin-bottom: 15px; }
+        .order-header { display: flex; justify-content: space-between; margin-bottom: 10px; gap: 18px; align-items: flex-start; }
         .file-details { background: white; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 13px; }
-        .print-btn { background: #28a745; }
+        .print-btn { background: linear-gradient(135deg, #16a34a, #15803d); min-width: 120px; }
         .print-btn:hover { background: #218838; }
         .print-btn:disabled { background: #6c757d; cursor: not-allowed; opacity: 0.6; }
-        .qr-section { text-align: center; padding: 20px; background: white; border-radius: 10px; margin-top: 20px; }
+        .qr-section { text-align: center; }
         #qrCode { margin: 20px auto; }
-        .price-display { background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+        .price-display {
+            background: linear-gradient(135deg, #fff8db, #fff1b8);
+            padding: 16px;
+            border-radius: 16px;
+            margin-bottom: 16px;
+            border: 1px solid #f4df96;
+        }
+        .settings button { margin-top: 6px; margin-bottom: 4px; }
+        #uiMessage { font-weight: 600; }
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
         .modal-content { background: white; padding: 30px; border-radius: 12px; max-width: 560px; width: 100%; max-height: calc(100vh - 40px); overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
         .modal-buttons { display: flex; gap: 10px; margin-top: 20px; position: sticky; bottom: 0; background: white; padding-top: 12px; }
@@ -40,7 +147,22 @@
         #printDetails { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; overflow-wrap: break-word; }
         #printDetails div { padding: 8px 0; border-bottom: 1px solid #e0e0e0; }
         #printDetails div:last-child { border-bottom: none; }
-        select { padding: 10px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; width: 100%; }
+        @media (max-width: 900px) {
+            .container { padding: 18px; }
+            .header { padding: 24px; border-radius: 20px; }
+            .header h1 { font-size: 26px; }
+            .order-header { flex-direction: column; }
+        }
+        @media (max-width: 640px) {
+            .container { padding: 14px; }
+            .header { flex-direction: column; align-items: flex-start; }
+            .settings, .orders, .qr-section { padding: 18px; border-radius: 18px; }
+            .customer-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+            button { width: 100%; margin-right: 0; margin-bottom: 10px; }
+            .status { margin-left: 0; }
+            .modal-content { padding: 22px; }
+            .modal-buttons { flex-direction: column; }
+        }
     </style>
 </head>
 <body>
