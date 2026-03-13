@@ -31,7 +31,6 @@
       "main": "main.js"
     },
     "win": {
-      "signAndEditExecutable": false,
       "target": [
         {
           "target": "nsis",
@@ -44,10 +43,11 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Print Shop Manager"
+      "installerIcon": "assets/app-icon.ico",
+      "uninstallerIcon": "assets/app-icon.ico",
+      "installerHeaderIcon": "assets/app-icon.ico"
     }
   },
   "dependencies": {

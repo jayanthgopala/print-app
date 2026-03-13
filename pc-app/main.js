@@ -5,7 +5,12 @@ const Store = require('electron-store');
 const QRCode = require('qrcode');
 const pdfPrinter = require('pdf-to-printer');
 
+const APP_ID = 'com.jayanthgopala.printshop.pcapp';
+const APP_DATA_DIR_NAME = 'Print Shop Manager';
+
 loadLocalEnv(path.join(__dirname, '.env'));
+
+configureAppPaths();
 
 const store = new Store();
 let mainWindow;
@@ -16,8 +21,26 @@ const API_URL = process.env.API_URL || DEFAULT_API_URL;
 const WS_URL = process.env.WS_URL || API_URL.replace(/^http/, 'ws');
 log('PC app backend config:', { API_URL, WS_URL });
 
+app.setAppUserModelId(APP_ID);
+
 process.on('uncaughtException', (err) => log('Uncaught:', formatError(err)));
 process.on('unhandledRejection', (err) => log('Unhandled:', formatError(err)));
+
+function configureAppPaths() {
+    try {
+        const appDataPath = app.getPath('appData');
+        const userDataPath = path.join(appDataPath, APP_DATA_DIR_NAME);
+        const sessionDataPath = path.join(userDataPath, 'SessionData');
+
+        fs.mkdirSync(userDataPath, { recursive: true });
+        fs.mkdirSync(sessionDataPath, { recursive: true });
+
+        app.setPath('userData', userDataPath);
+        app.setPath('sessionData', sessionDataPath);
+    } catch (error) {
+        console.error('Failed to configure app paths:', formatError(error));
+    }
+}
 
 function loadLocalEnv(envPath) {
     if (!fs.existsSync(envPath)) return;
@@ -70,7 +93,7 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
-        icon: path.join(__dirname, 'assets', 'app-icon.png'),
+        icon: getAppIconPath(),
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
@@ -91,6 +114,11 @@ function createWindow() {
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
         log('Window load failed:', { errorCode, errorDescription });
     });
+}
+
+function getAppIconPath() {
+    const iconFile = process.platform === 'win32' ? 'app-icon.ico' : 'app-icon.png';
+    return path.join(__dirname, 'assets', iconFile);
 }
 
 app.whenReady().then(createWindow);
