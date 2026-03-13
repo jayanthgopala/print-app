@@ -51,11 +51,26 @@ function createWindow() {
     });
 
     mainWindow.loadFile('index.html');
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
+    mainWindow.webContents.on('render-process-gone', (event, details) => {
+        console.error('Renderer process gone:', details);
+    });
+    mainWindow.webContents.on('unresponsive', () => {
+        console.error('Renderer became unresponsive');
+    });
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+        console.error('Window load failed:', errorCode, errorDescription);
+    });
 }
 
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {});
+app.on('child-process-gone', (event, details) => {
+    console.error('Child process gone:', details);
+});
 
 ipcMain.handle('get-settings', () => ({
     shopId: store.get('shopId', ''),

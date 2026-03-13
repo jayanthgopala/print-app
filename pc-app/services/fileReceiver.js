@@ -82,7 +82,9 @@ class ShopReceiver {
                 transferId,
                 metadata: null,
                 chunks: [],
-                bytesReceived: 0
+                bytesReceived: 0,
+                completed: false,
+                cleanedUp: false
             };
             this.transfers.set(transferId, transfer);
 
@@ -96,6 +98,7 @@ class ShopReceiver {
             };
 
             peer.onconnectionstatechange = () => {
+                if (transfer.completed) return;
                 if (['failed', 'disconnected', 'closed'].includes(peer.connectionState)) {
                     this.failTransfer(transferId, `Peer connection ${peer.connectionState}`);
                 }
@@ -105,6 +108,11 @@ class ShopReceiver {
                 transfer.channel = event.channel;
                 transfer.channel.onmessage = (msg) => this.handleChannelMessage(transferId, msg.data);
                 transfer.channel.onerror = () => this.failTransfer(transferId, 'Data channel error');
+                transfer.channel.onclose = () => {
+                    if (!transfer.completed) {
+                        this.failTransfer(transferId, 'Data channel closed');
+                    }
+                };
             };
 
             await peer.setRemoteDescription(new wrtc.RTCSessionDescription(offer));
@@ -191,12 +199,14 @@ class ShopReceiver {
                 });
             }
 
+            transfer.completed = true;
+
             if (transfer.channel && transfer.channel.readyState === 'open') {
                 transfer.channel.send(JSON.stringify({ type: 'FILE_RECEIVED' }));
             }
 
             this.notifyTransferState(transferId, 'COMPLETED');
-            this.cleanupTransfer(transferId);
+            setTimeout(() => this.cleanupTransfer(transferId), 250);
         } catch (error) {
             console.error('Finalize transfer failed:', error);
             this.failTransfer(transferId, error.message || 'Save failed');
@@ -241,6 +251,10 @@ class ShopReceiver {
 
     failTransfer(transferId, reason) {
         const transfer = this.transfers.get(transferId);
+        if (!transfer || transfer.completed) {
+            this.cleanupTransfer(transferId);
+            return;
+        }
         if (transfer && transfer.channel && transfer.channel.readyState === 'open') {
             try {
                 transfer.channel.send(JSON.stringify({ type: 'TRANSFER_ERROR', reason }));
@@ -253,14 +267,42 @@ class ShopReceiver {
     cleanupTransfer(transferId) {
         const transfer = this.transfers.get(transferId);
         if (!transfer) return;
+        if (transfer.cleanedUp) return;
+        transfer.cleanedUp = true;
 
-        try {
-            transfer.channel?.close();
-        } catch (error) {}
-        try {
-            transfer.peer?.close();
-        } catch (error) {}
-        this.transfers.delete(transferId);
+        const finish = () => {
+            this.transfers.delete(transferId);
+        };
+
+        setTimeout(() => {
+            try {
+                if (transfer.channel) {
+                    transfer.channel.onmessage = null;
+                    transfer.channel.onerror = null;
+                    transfer.channel.onclose = null;
+                    if (transfer.channel.readyState !== 'closed') {
+                        transfer.channel.close();
+                    }
+                }
+            } catch (error) {
+                console.error('Channel cleanup failed:', error);
+            }
+
+            try {
+                if (transfer.peer) {
+                    transfer.peer.onicecandidate = null;
+                    transfer.peer.onconnectionstatechange = null;
+                    transfer.peer.ondatachannel = null;
+                    if (transfer.peer.signalingState !== 'closed') {
+                        transfer.peer.close();
+                    }
+                }
+            } catch (error) {
+                console.error('Peer cleanup failed:', error);
+            }
+
+            finish();
+        }, transfer.completed ? 500 : 0);
     }
 }
 

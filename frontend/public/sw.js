@@ -9,6 +9,8 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Let all requests pass through
-  event.respondWith(fetch(event.request));
+  // Pass requests through without surfacing unhandled promise rejections in the SW.
+  event.respondWith(
+    fetch(event.request).catch(() => Response.error())
+  );
 });
