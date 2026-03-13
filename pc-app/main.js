@@ -307,6 +307,73 @@ ipcMain.handle('save-received-file', async (event, payload) => {
     }
 });
 
+ipcMain.handle('print-qr', async (event, payload) => {
+    try {
+        const qrDataUrl = payload?.qrDataUrl || '';
+        const shopId = payload?.shopId || store.get('shopId', '');
+        const printerName = store.get('colorPrinter', '') || store.get('bwPrinter', '');
+
+        if (!qrDataUrl) {
+            return { success: false, message: 'QR code not generated' };
+        }
+
+        const printWindow = new BrowserWindow({
+            show: false,
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true
+            }
+        });
+
+        const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Shop QR</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 0; padding: 32px; display: flex; justify-content: center; }
+                    .sheet { width: 100%; max-width: 520px; text-align: center; }
+                    h1 { margin: 0 0 8px; font-size: 28px; }
+                    p { margin: 0 0 20px; color: #444; }
+                    img { width: 320px; height: 320px; object-fit: contain; }
+                    .code { margin-top: 14px; font-size: 18px; font-weight: 700; letter-spacing: 1px; }
+                </style>
+            </head>
+            <body>
+                <div class="sheet">
+                    <h1>Scan to Send Files</h1>
+                    <p>Share files directly to this print shop.</p>
+                    <img src="${qrDataUrl}" alt="Shop QR Code">
+                    <div class="code">${escapeHtmlForHtml(shopId)}</div>
+                </div>
+            </body>
+            </html>
+        `;
+
+        await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+
+        return await new Promise((resolve) => {
+            printWindow.webContents.print({
+                silent: true,
+                printBackground: true,
+                deviceName: printerName,
+                copies: 1,
+                pageSize: 'A4'
+            }, (success, errorType) => {
+                printWindow.close();
+                if (!success) {
+                    resolve({ success: false, message: errorType || 'QR print failed' });
+                } else {
+                    resolve({ success: true, message: printerName ? `QR sent to ${printerName}` : 'QR sent to printer' });
+                }
+            });
+        });
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+});
+
 ipcMain.handle('print-file', async (event, filePath, options) => {
     try {
         const normalizedPath = path.normalize(filePath);
@@ -425,4 +492,14 @@ function saveReceivedFile(downloadPath, filename, buffer) {
 
     fs.writeFileSync(candidate, buffer);
     return path.normalize(candidate);
+}
+
+function escapeHtmlForHtml(text) {
+    return String(text).replace(/[&<>"']/g, (match) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    }[match]));
 }

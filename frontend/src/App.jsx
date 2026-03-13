@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FileTransferClient } from './services/webrtc';
 import { API_URL, WS_URL } from './config';
 import './App.css';
@@ -16,6 +16,7 @@ const DEFAULT_PRINT_SETTINGS = {
 };
 
 export default function App() {
+    const transferClientRef = useRef(null);
     const [shopId, setShopId] = useState('');
     const [status, setStatus] = useState('DISCONNECTED');
     const [customerName, setCustomerName] = useState('');
@@ -26,6 +27,10 @@ export default function App() {
     const [installPrompt, setInstallPrompt] = useState(null);
     const [showInstallBanner, setShowInstallBanner] = useState(false);
     const [showQRScanner, setShowQRScanner] = useState(false);
+    const [errorMessage, setErrorMessage] = useState('');
+    const [infoMessage, setInfoMessage] = useState('');
+    const [isConnecting, setIsConnecting] = useState(false);
+    const [isSending, setIsSending] = useState(false);
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -38,11 +43,17 @@ export default function App() {
             handleSharedFiles();
         }
 
-        window.addEventListener('beforeinstallprompt', (e) => {
+        const onBeforeInstallPrompt = (e) => {
             e.preventDefault();
             setInstallPrompt(e);
             setShowInstallBanner(true);
-        });
+        };
+        window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+
+        return () => {
+            window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+            transferClientRef.current = null;
+        };
     }, []);
 
     const handleSharedFiles = async () => {
@@ -72,28 +83,89 @@ export default function App() {
     };
 
     const handleConnect = () => {
-        if (!shopId || !WS_URL) return;
+        const normalizedShopId = normalizeShopCode(shopId);
+        if (!normalizedShopId || !WS_URL) {
+            setErrorMessage('Enter a valid shop code before connecting.');
+            return;
+        }
 
-        const client = new FileTransferClient(shopId, WS_URL, setStatus, setProgress);
+        if (!API_URL) {
+            setErrorMessage('Frontend API is not configured.');
+            return;
+        }
+
+        setErrorMessage('');
+        setInfoMessage('Checking shop status...');
+        setIsConnecting(true);
+        setPricing(null);
+
+        const client = new FileTransferClient(normalizedShopId, WS_URL, (nextStatus) => {
+            setStatus(nextStatus);
+            if (nextStatus === 'ONLINE') {
+                setErrorMessage('');
+                setInfoMessage('Shop is online. You can upload files now.');
+            } else if (nextStatus === 'OFFLINE') {
+                setInfoMessage('');
+                setErrorMessage('Shop is offline or not connected right now.');
+            } else if (nextStatus === 'ERROR') {
+                setInfoMessage('');
+                setErrorMessage('Connection or transfer failed. Check the shop status and try again.');
+            } else if (nextStatus === 'TRANSFERRING') {
+                setInfoMessage('Transfer in progress...');
+            } else if (nextStatus === 'COMPLETED') {
+                setInfoMessage('Files sent successfully.');
+            }
+        }, setProgress);
         client.connect();
-        window.transferClient = client;
+        transferClientRef.current = client;
+        setShopId(normalizedShopId);
 
-        fetch(`${API_URL}/shop/public/${encodeURIComponent(shopId)}`)
+        fetch(`${API_URL}/shop/public/${encodeURIComponent(normalizedShopId)}`)
             .then((r) => r.json())
             .then((data) => {
                 if (data.shop) {
                     setPricing(data.shop);
+                } else {
+                    setErrorMessage('Shop details could not be loaded.');
                 }
             })
-            .catch(console.error);
+            .catch(() => {
+                setErrorMessage('Could not load shop pricing.');
+            })
+            .finally(() => {
+                setIsConnecting(false);
+            });
     };
 
     const handleFileSelect = (e) => {
-        const selectedFiles = Array.from(e.target.files).map((file) => ({
-            file,
-            ...DEFAULT_PRINT_SETTINGS
-        }));
-        setFiles([...files, ...selectedFiles]);
+        const selectedFiles = Array.from(e.target.files);
+        const validFiles = [];
+        const invalidFiles = [];
+
+        for (const file of selectedFiles) {
+            if (!isAllowedFileType(file)) {
+                invalidFiles.push(`${file.name}: unsupported file type`);
+                continue;
+            }
+            if (file.size <= 0 || file.size > 100 * 1024 * 1024) {
+                invalidFiles.push(`${file.name}: file size must be 1 byte to 100 MB`);
+                continue;
+            }
+            validFiles.push({
+                file,
+                ...DEFAULT_PRINT_SETTINGS
+            });
+        }
+
+        if (invalidFiles.length > 0) {
+            setErrorMessage(invalidFiles.join(' | '));
+        } else {
+            setErrorMessage('');
+        }
+
+        if (validFiles.length > 0) {
+            setFiles((current) => [...current, ...validFiles]);
+        }
         e.target.value = '';
     };
 
@@ -114,10 +186,26 @@ export default function App() {
     };
 
     const handleSend = async () => {
-        if (!window.transferClient || !customerName || files.length === 0) return;
+        if (!transferClientRef.current) {
+            setErrorMessage('Connect to a shop before sending files.');
+            return;
+        }
+
+        const validationError = validateSubmission({
+            customerName,
+            files
+        });
+        if (validationError) {
+            setErrorMessage(validationError);
+            return;
+        }
 
         setCurrentFile(0);
         setStatus('CONNECTING');
+        setErrorMessage('');
+        setInfoMessage('Preparing files for transfer...');
+        setIsSending(true);
+        setProgress(0);
 
         try {
             for (let i = 0; i < files.length; i++) {
@@ -140,21 +228,35 @@ export default function App() {
                     scale: item.scale || 'fit'
                 };
 
-                await window.transferClient.startFileTransfer(item.file, metadata);
+                await transferClientRef.current.startFileTransfer(item.file, metadata);
                 await new Promise((resolve) => setTimeout(resolve, 400));
             }
+            setFiles([]);
+            setProgress(100);
         } catch (error) {
             console.error('Transfer failed:', error);
             setStatus('ERROR');
+            setErrorMessage(error.message || 'Transfer failed.');
+            setInfoMessage('');
+        } finally {
+            setIsSending(false);
         }
     };
 
     const showConnectedPanel = ['ONLINE', 'CONNECTING', 'TRANSFERRING', 'COMPLETED', 'ERROR'].includes(status);
+    const canSend = !isSending && status !== 'OFFLINE' && customerName.trim() && files.length > 0;
 
     return (
         <div className="container">
             <div className="card">
                 <h1>Send Files to Print</h1>
+                <p className="hero-copy">Fast direct file transfer to your print shop with full print instructions.</p>
+
+                {(errorMessage || infoMessage) && (
+                    <div className={`message-banner ${errorMessage ? 'error' : 'info'}`}>
+                        {errorMessage || infoMessage}
+                    </div>
+                )}
 
                 {showInstallBanner && (
                     <div className="install-banner">
@@ -191,15 +293,15 @@ export default function App() {
                                 type="text"
                                 placeholder="Enter Shop Code (e.g., SHOP001)"
                                 value={shopId}
-                                onChange={(e) => setShopId(e.target.value)}
+                                onChange={(e) => setShopId(e.target.value.toUpperCase())}
                                 className="input"
                             />
                             <button
                                 onClick={handleConnect}
                                 className="btn-primary"
-                                disabled={!shopId}
+                                disabled={!shopId || isConnecting}
                             >
-                                Connect and Upload
+                                {isConnecting ? 'Connecting...' : 'Connect and Upload'}
                             </button>
                         </div>
 
@@ -231,11 +333,11 @@ export default function App() {
                             type="text"
                             placeholder="Enter Shop Code (e.g., SHOP001)"
                             value={shopId}
-                            onChange={(e) => setShopId(e.target.value)}
+                            onChange={(e) => setShopId(e.target.value.toUpperCase())}
                             className="input"
                         />
-                        <button onClick={handleConnect} className="btn-primary">
-                            Connect
+                        <button onClick={handleConnect} className="btn-primary" disabled={!shopId || isConnecting}>
+                            {isConnecting ? 'Connecting...' : 'Connect'}
                         </button>
                     </div>
                 )}
@@ -262,6 +364,7 @@ export default function App() {
                             value={customerName}
                             onChange={(e) => setCustomerName(e.target.value)}
                             className="input"
+                            maxLength={50}
                         />
 
                         <input
@@ -430,8 +533,8 @@ export default function App() {
                         )}
 
                         {files.length > 0 && (
-                            <button onClick={handleSend} className="btn-primary">
-                                Send {files.length} File{files.length > 1 ? 's' : ''} to Print
+                            <button onClick={handleSend} className="btn-primary" disabled={!canSend}>
+                                {isSending ? `Sending ${currentFile || 1}/${files.length}` : `Send ${files.length} File${files.length > 1 ? 's' : ''} to Print`}
                             </button>
                         )}
 
@@ -455,4 +558,41 @@ export default function App() {
             </div>
         </div>
     );
+}
+
+function normalizeShopCode(value) {
+    return String(value || '').trim().replace(/[<>]/g, '').toUpperCase();
+}
+
+function isAllowedFileType(file) {
+    return new Set([
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'image/jpeg',
+        'image/png'
+    ]).has(file.type);
+}
+
+function validateSubmission({ customerName, files }) {
+    if (!customerName.trim()) {
+        return 'Enter your name before sending files.';
+    }
+
+    if (files.length === 0) {
+        return 'Add at least one file before sending.';
+    }
+
+    for (const item of files) {
+        if (!item.file.type.startsWith('image/') && item.pageMode === 'custom' && !item.colorPages.trim() && !item.bwPages.trim()) {
+            return `Add page ranges or choose an all-pages option for ${item.file.name}.`;
+        }
+
+        const copies = Number(item.copies || 1);
+        if (!Number.isFinite(copies) || copies < 1 || copies > 20) {
+            return `Copies for ${item.file.name} must be between 1 and 20.`;
+        }
+    }
+
+    return '';
 }

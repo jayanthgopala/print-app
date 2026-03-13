@@ -6,6 +6,7 @@ let currentPrintJob = null;
 let colorPrinter = '';
 let bwPrinter = '';
 let receiverService = null;
+let currentQrDataUrl = '';
 
 class ShopReceiverClient {
     constructor({ shopId, token, wsUrl, onStatusChange, onFileReceived, onLog }) {
@@ -489,10 +490,39 @@ async function showQR() {
 
     const result = await window.electronAPI.generateQR(shopId);
     if (result.success) {
+        currentQrDataUrl = result.qrDataUrl;
         document.getElementById('qrCode').innerHTML = `<img src="${result.qrDataUrl}" alt="QR Code">`;
         document.getElementById('qrSection').style.display = 'block';
     } else {
         showMessage('Error generating QR: ' + result.message, 'error');
+    }
+}
+
+async function printQR() {
+    const shopId = document.getElementById('shopId').value;
+    if (!shopId) {
+        showMessage('Please enter a shop code first', 'error');
+        return;
+    }
+
+    if (!currentQrDataUrl) {
+        await showQR();
+    }
+
+    if (!currentQrDataUrl) {
+        showMessage('QR code is not ready to print', 'error');
+        return;
+    }
+
+    const result = await window.electronAPI.printQR({
+        shopId,
+        qrDataUrl: currentQrDataUrl
+    });
+
+    if (result.success) {
+        showMessage(result.message || 'QR sent to printer', 'success');
+    } else {
+        showMessage('Error printing QR: ' + result.message, 'error');
     }
 }
 

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
     selectFolder: () => ipcRenderer.invoke('select-folder'),
     generateQR: (shopId) => ipcRenderer.invoke('generate-qr', shopId),
+    printQR: (payload) => ipcRenderer.invoke('print-qr', payload),
     startService: () => ipcRenderer.invoke('start-service'),
     saveReceivedFile: (payload) => ipcRenderer.invoke('save-received-file', payload),
     getPrinters: () => ipcRenderer.invoke('get-printers'),
