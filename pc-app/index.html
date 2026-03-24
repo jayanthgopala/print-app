@@ -1,298 +1,813 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Print Shop Manager</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         :root {
-            --bg: #eef2f6;
-            --panel: #ffffff;
-            --panel-soft: #f8fafc;
-            --line: #d9e2ec;
-            --text: #18212f;
+            --bg: #f2f6fb;
+            --bg-deep: #dfe9f6;
+            --panel: rgba(255, 255, 255, 0.9);
+            --panel-strong: #ffffff;
+            --panel-border: rgba(142, 164, 190, 0.28);
+            --text: #172233;
             --muted: #607086;
-            --brand-start: #1f6feb;
-            --brand-end: #0f9d8a;
-            --success-bg: #dff6e8;
-            --success-text: #155b2d;
-            --danger-bg: #fde7ea;
-            --danger-text: #842029;
-            --shadow: 0 18px 40px rgba(22, 34, 51, 0.08);
+            --brand: #1f6feb;
+            --brand-deep: #194fb3;
+            --accent: #0f9d8a;
+            --accent-soft: #dcf6ef;
+            --warn: #f59e0b;
+            --danger: #c0394b;
+            --danger-soft: #fde7ea;
+            --success: #1d7a45;
+            --success-soft: #ddf5e4;
+            --line: #dbe5f0;
+            --shadow-lg: 0 24px 60px rgba(15, 23, 42, 0.12);
+            --shadow-md: 0 14px 30px rgba(15, 23, 42, 0.08);
+            --radius-xl: 28px;
+            --radius-lg: 22px;
+            --radius-md: 16px;
+            --radius-sm: 12px;
         }
+
         body {
-            font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
-            background:
-                radial-gradient(circle at top left, rgba(31, 111, 235, 0.08), transparent 32%),
-                radial-gradient(circle at top right, rgba(15, 157, 138, 0.10), transparent 28%),
-                linear-gradient(180deg, #f7fafc 0%, var(--bg) 100%);
+            min-height: 100vh;
+            font-family: "Segoe UI", "Helvetica Neue", sans-serif;
             color: var(--text);
-        }
-        .container { max-width: 1280px; margin: 0 auto; padding: 28px; }
-        .header {
-            background: linear-gradient(135deg, var(--brand-start), var(--brand-end));
-            color: white;
-            padding: 32px;
-            border-radius: 24px;
-            margin-bottom: 22px;
-            box-shadow: var(--shadow);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 20px;
-        }
-        .brand {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-        .brand-mark {
-            width: 64px;
-            height: 64px;
-            border-radius: 18px;
             background:
-                radial-gradient(circle at 30% 30%, rgba(255,255,255,0.95), rgba(255,255,255,0.18) 36%, transparent 37%),
-                linear-gradient(135deg, rgba(255,255,255,0.28), rgba(255,255,255,0.10)),
-                rgba(255,255,255,0.16);
-            border: 1px solid rgba(255,255,255,0.32);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), 0 10px 20px rgba(0,0,0,0.15);
+                radial-gradient(circle at top left, rgba(31, 111, 235, 0.14), transparent 28%),
+                radial-gradient(circle at bottom right, rgba(15, 157, 138, 0.16), transparent 30%),
+                linear-gradient(180deg, #f8fbff 0%, var(--bg) 48%, var(--bg-deep) 100%);
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.28) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.28) 1px, transparent 1px);
+            background-size: 36px 36px;
+            mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.55), transparent 90%);
+            pointer-events: none;
+        }
+
+        .app-shell {
             position: relative;
+            z-index: 1;
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 28px;
+        }
+
+        .hero {
+            position: relative;
+            overflow: hidden;
             display: grid;
-            place-items: center;
-            backdrop-filter: blur(6px);
+            grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
+            gap: 22px;
+            padding: 28px;
+            border-radius: var(--radius-xl);
+            background:
+                linear-gradient(135deg, rgba(17, 33, 61, 0.96), rgba(23, 86, 182, 0.94) 48%, rgba(13, 139, 123, 0.92));
+            color: #fff;
+            box-shadow: var(--shadow-lg);
+            margin-bottom: 24px;
         }
-        .brand-mark::before {
-            content: '';
-            width: 28px;
-            height: 34px;
-            border-radius: 6px;
-            background: white;
-            box-shadow: 0 0 0 3px rgba(255,255,255,0.18);
+
+        .hero::after {
+            content: "";
             position: absolute;
+            width: 280px;
+            height: 280px;
+            right: -40px;
+            top: -80px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.08);
+            filter: blur(8px);
         }
-        .brand-mark::after {
-            content: '';
-            width: 18px;
-            height: 4px;
-            border-radius: 999px;
-            background: linear-gradient(90deg, #1f6feb, #0f9d8a);
-            position: absolute;
-            top: 18px;
-            box-shadow: 0 8px 0 0 #dbeafe, 0 16px 0 0 #dbeafe;
+
+        .hero-main,
+        .hero-side {
+            position: relative;
+            z-index: 1;
         }
-        .brand-copy {
+
+        .hero-main {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 22px;
         }
-        .header h1 {
-            font-size: 32px;
-            letter-spacing: -0.02em;
+
+        .brand-row {
+            display: flex;
+            align-items: center;
+            gap: 18px;
         }
+
+        .brand-logo {
+            width: 78px;
+            height: 78px;
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+            display: grid;
+            place-items: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .brand-logo img {
+            width: 54px;
+            height: 54px;
+        }
+
         .brand-copy p {
+            font-size: 12px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            opacity: 0.78;
+            margin-bottom: 6px;
+        }
+
+        .brand-copy h1 {
+            font-size: 36px;
+            line-height: 1.02;
+            letter-spacing: -0.03em;
+        }
+
+        .hero-copy {
+            max-width: 760px;
+            font-size: 16px;
+            line-height: 1.7;
+            color: rgba(255, 255, 255, 0.86);
+        }
+
+        .hero-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .metric-card {
+            padding: 16px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            backdrop-filter: blur(10px);
+        }
+
+        .metric-card span {
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            opacity: 0.72;
+            margin-bottom: 8px;
+        }
+
+        .metric-card strong {
+            display: block;
+            font-size: 21px;
+            letter-spacing: -0.03em;
+        }
+
+        .hero-side {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 18px;
+        }
+
+        .status-panel,
+        .support-panel {
+            padding: 18px;
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            backdrop-filter: blur(8px);
+        }
+
+        .status-panel small,
+        .support-panel small {
+            display: block;
+            font-size: 12px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            opacity: 0.72;
+            margin-bottom: 10px;
+        }
+
+        .status-line {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border-radius: 999px;
+            font-weight: 700;
             font-size: 13px;
-            opacity: 0.88;
-            letter-spacing: 0.04em;
+            letter-spacing: 0.05em;
             text-transform: uppercase;
         }
-        .settings, .orders, .qr-section {
-            background: var(--panel);
-            padding: 26px;
-            border-radius: 22px;
-            margin-bottom: 22px;
-            box-shadow: var(--shadow);
-            border: 1px solid rgba(217, 226, 236, 0.9);
+
+        .status::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
         }
-        .settings h2, .orders h2, .qr-section h3 {
-            margin-bottom: 18px;
-            font-size: 22px;
-            letter-spacing: -0.02em;
+
+        .status.online {
+            background: rgba(214, 252, 229, 0.94);
+            color: var(--success);
         }
-        .input-group { margin-bottom: 16px; }
-        label { display: block; margin-bottom: 7px; font-weight: 700; color: var(--text); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
-        input, select {
-            width: 100%;
-            padding: 12px 14px;
-            border: 1px solid var(--line);
-            border-radius: 12px;
+
+        .status.offline {
+            background: rgba(255, 233, 236, 0.96);
+            color: var(--danger);
+        }
+
+        .status-note,
+        .support-panel p {
+            color: rgba(255, 255, 255, 0.82);
+            line-height: 1.6;
             font-size: 14px;
-            background: var(--panel-soft);
-            color: var(--text);
-            transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
         }
-        input:focus, select:focus {
-            outline: none;
-            border-color: #7aa7ff;
-            background: #fff;
-            box-shadow: 0 0 0 4px rgba(31, 111, 235, 0.12);
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
+            gap: 22px;
+            align-items: start;
         }
-        button {
-            padding: 12px 20px;
-            background: linear-gradient(135deg, var(--brand-start), #2458b8);
-            color: white;
-            border: none;
-            border-radius: 12px;
-            cursor: pointer;
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            backdrop-filter: blur(12px);
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            padding: 24px 24px 0;
+            margin-bottom: 18px;
+        }
+
+        .panel-header h2,
+        .panel-header h3 {
+            font-size: 24px;
+            letter-spacing: -0.03em;
+            margin-bottom: 6px;
+        }
+
+        .panel-header p {
+            color: var(--muted);
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .settings-panel,
+        .orders-panel,
+        .qr-panel {
+            padding-bottom: 24px;
+        }
+
+        .content-pad {
+            padding: 0 24px;
+        }
+
+        .message-banner {
+            display: none;
+            margin: 0 24px 20px;
+            padding: 14px 16px;
+            border-radius: 14px;
+            font-weight: 600;
+            border: 1px solid transparent;
+        }
+
+        .section-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .field-card {
+            padding: 16px;
+            border-radius: 18px;
+            background: rgba(248, 251, 255, 0.94);
+            border: 1px solid var(--line);
+        }
+
+        .field-card.full {
+            grid-column: 1 / -1;
+        }
+
+        .field-card.accent {
+            background: linear-gradient(180deg, #fdfefe 0%, #f1fbf8 100%);
+            border-color: #cdebe3;
+        }
+
+        .field-card label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 12px;
             font-weight: 700;
-            margin-right: 10px;
-            box-shadow: 0 10px 20px rgba(31, 111, 235, 0.16);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .field-card input,
+        .field-card select {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 13px 14px;
+            background: #fff;
+            color: var(--text);
+            font-size: 14px;
+            transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+        }
+
+        .field-card input:focus,
+        .field-card select:focus {
+            outline: none;
+            border-color: rgba(31, 111, 235, 0.5);
+            box-shadow: 0 0 0 4px rgba(31, 111, 235, 0.12);
+            transform: translateY(-1px);
+        }
+
+        .inline-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .hint {
+            margin-top: 9px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .cta-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 18px;
+        }
+
+        .cta-row .wide {
+            grid-column: 1 / -1;
+        }
+
+        button {
+            appearance: none;
+            border: none;
+            border-radius: 14px;
+            padding: 14px 18px;
+            font-weight: 700;
+            font-size: 14px;
+            color: white;
+            background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+            cursor: pointer;
+            box-shadow: 0 12px 24px rgba(31, 111, 235, 0.18);
             transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
         }
-        button:hover { transform: translateY(-1px); box-shadow: 0 14px 26px rgba(31, 111, 235, 0.20); }
-        button:active { transform: translateY(0); }
-        .status { display: inline-block; padding: 9px 18px; border-radius: 999px; font-weight: 700; margin-left: 15px; font-size: 13px; letter-spacing: 0.03em; }
-        .status.online { background: #d4edda; color: #155724; }
-        .status.offline { background: #f8d7da; color: #721c24; }
-        .order-item {
-            background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-            padding: 20px;
+
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 16px 26px rgba(31, 111, 235, 0.22);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #2a3d57, #1d293b);
+            box-shadow: 0 12px 24px rgba(23, 34, 51, 0.16);
+        }
+
+        .btn-accent {
+            background: linear-gradient(135deg, var(--accent), #0b7f71);
+            box-shadow: 0 12px 24px rgba(15, 157, 138, 0.18);
+        }
+
+        .btn-skip {
+            padding: 9px 14px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #ffd15c, #f4a40f);
+            color: #3d2800;
+            box-shadow: none;
+        }
+
+        .mini-stat {
+            min-width: 118px;
+            padding: 13px 14px;
             border-radius: 16px;
-            margin-bottom: 14px;
-            border: 1px solid #dbe6f3;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+            background: linear-gradient(180deg, #ffffff, #f6f9fd);
+            border: 1px solid var(--line);
+            text-align: right;
         }
-        .customer-group {
-            background: #fff;
-            padding: 18px;
+
+        .mini-stat small {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 6px;
+        }
+
+        .mini-stat strong {
+            font-size: 24px;
+            letter-spacing: -0.03em;
+        }
+
+        .orders-empty {
+            padding: 44px 24px;
+            border: 1px dashed #c7d5e5;
             border-radius: 18px;
-            margin-bottom: 20px;
-            border: 1px solid #d8e4f1;
-            box-shadow: 0 10px 24px rgba(16, 24, 40, 0.05);
+            text-align: center;
+            color: var(--muted);
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 248, 252, 0.92));
         }
+
+        .customer-group {
+            margin: 0 24px 18px;
+            padding: 18px;
+            border-radius: 20px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 255, 0.96));
+            border: 1px solid var(--line);
+            box-shadow: 0 14px 26px rgba(15, 23, 42, 0.05);
+        }
+
         .customer-header {
-            background: linear-gradient(135deg, #233554, #1f6feb);
-            color: white;
-            padding: 15px 18px;
-            border-radius: 14px;
-            margin-bottom: 15px;
-            font-size: 16px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }
-        .btn-skip { background: #ffc107; color: #000; padding: 8px 16px; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: none; }
-        .btn-skip:hover { background: #ffb300; }
-        .order-header { display: flex; justify-content: space-between; margin-bottom: 10px; gap: 18px; align-items: flex-start; }
-        .file-details { background: white; padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 13px; }
-        .print-btn { background: linear-gradient(135deg, #16a34a, #15803d); min-width: 120px; }
-        .print-btn:hover { background: #218838; }
-        .print-btn:disabled { background: #6c757d; cursor: not-allowed; opacity: 0.6; }
-        .qr-section { text-align: center; }
-        #qrCode { margin: 20px auto; }
-        .price-display {
-            background: linear-gradient(135deg, #fff8db, #fff1b8);
-            padding: 16px;
+            gap: 16px;
+            padding: 16px 18px;
+            margin-bottom: 14px;
             border-radius: 16px;
-            margin-bottom: 16px;
-            border: 1px solid #f4df96;
+            background: linear-gradient(135deg, #233554, #1f6feb);
+            color: white;
         }
-        .settings button { margin-top: 6px; margin-bottom: 4px; }
-        #uiMessage { font-weight: 600; }
-        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
-        .modal-content { background: white; padding: 30px; border-radius: 12px; max-width: 560px; width: 100%; max-height: calc(100vh - 40px); overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
-        .modal-buttons { display: flex; gap: 10px; margin-top: 20px; position: sticky; bottom: 0; background: white; padding-top: 12px; }
-        .btn-print, .btn-cancel { flex: 1; padding: 12px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; }
-        .btn-print { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
-        .btn-cancel { background: #e0e0e0; color: #333; }
-        #printDetails { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; overflow-wrap: break-word; }
-        #printDetails div { padding: 8px 0; border-bottom: 1px solid #e0e0e0; }
-        #printDetails div:last-child { border-bottom: none; }
-        @media (max-width: 900px) {
-            .container { padding: 18px; }
-            .header { padding: 24px; border-radius: 20px; }
-            .header h1 { font-size: 26px; }
-            .order-header { flex-direction: column; }
+
+        .order-item {
+            margin-bottom: 12px;
+            padding: 18px;
+            border-radius: 18px;
+            background: white;
+            border: 1px solid #dde7f2;
         }
-        @media (max-width: 640px) {
-            .container { padding: 14px; }
-            .header { flex-direction: column; align-items: flex-start; }
-            .brand { align-items: flex-start; }
-            .settings, .orders, .qr-section { padding: 18px; border-radius: 18px; }
-            .customer-header { flex-direction: column; align-items: flex-start; gap: 10px; }
-            button { width: 100%; margin-right: 0; margin-bottom: 10px; }
-            .status { margin-left: 0; }
-            .modal-content { padding: 22px; }
-            .modal-buttons { flex-direction: column; }
+
+        .order-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 18px;
+        }
+
+        .print-btn {
+            min-width: 140px;
+            background: linear-gradient(135deg, #18a058, #0c7a3f);
+            box-shadow: 0 12px 24px rgba(24, 160, 88, 0.16);
+        }
+
+        .print-btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .qr-wrap {
+            margin: 0 24px;
+            padding: 26px;
+            border-radius: 20px;
+            border: 1px dashed #cbd9e7;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 252, 0.96));
+            text-align: center;
+        }
+
+        #qrCode {
+            min-height: 160px;
+            margin: 18px auto 14px;
+            display: grid;
+            place-items: center;
+        }
+
+        #qrCode img {
+            border-radius: 18px;
+            padding: 12px;
+            background: white;
+            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: rgba(13, 18, 28, 0.62);
+            backdrop-filter: blur(7px);
+            z-index: 1000;
+        }
+
+        .modal-content {
+            width: min(620px, 100%);
+            max-height: calc(100vh - 48px);
+            overflow-y: auto;
+            padding: 24px;
+            border-radius: 24px;
+            background: linear-gradient(180deg, #ffffff, #f6f9fd);
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.26);
+        }
+
+        .modal-content h2 {
+            font-size: 28px;
+            letter-spacing: -0.03em;
+            margin-bottom: 14px;
+        }
+
+        #printDetails {
+            margin-top: 14px;
+            padding: 16px;
+            border-radius: 18px;
+            background: white;
+            border: 1px solid var(--line);
+        }
+
+        #printDetails div {
+            padding: 10px 0;
+            border-bottom: 1px solid #e5edf6;
+        }
+
+        #printDetails div:last-child {
+            border-bottom: none;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 18px;
+            position: sticky;
+            bottom: 0;
+            padding-top: 14px;
+            background: linear-gradient(180deg, rgba(246, 249, 253, 0), rgba(246, 249, 253, 1) 35%);
+        }
+
+        .btn-print {
+            flex: 1;
+            background: linear-gradient(135deg, #0f9d8a, #1570ef);
+        }
+
+        .btn-cancel {
+            flex: 1;
+            background: linear-gradient(135deg, #d8e0eb, #c3cedd);
+            color: #203044;
+            box-shadow: none;
+        }
+
+        @media (max-width: 1180px) {
+            .dashboard-grid,
+            .hero {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 760px) {
+            .app-shell {
+                padding: 16px;
+            }
+
+            .hero,
+            .panel-header,
+            .content-pad,
+            .message-banner,
+            .customer-group,
+            .qr-wrap {
+                margin-left: 0;
+                margin-right: 0;
+            }
+
+            .hero {
+                padding: 20px;
+            }
+
+            .brand-row {
+                align-items: flex-start;
+            }
+
+            .brand-copy h1 {
+                font-size: 28px;
+            }
+
+            .hero-metrics,
+            .section-grid,
+            .inline-row,
+            .cta-row,
+            .modal-buttons {
+                grid-template-columns: 1fr;
+                display: grid;
+            }
+
+            .order-header,
+            .customer-header,
+            .panel-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            button,
+            .mini-stat {
+                width: 100%;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="brand">
-                <div class="brand-mark" aria-hidden="true"></div>
-                <div class="brand-copy">
-                    <h1>Print Shop Manager</h1>
-                    <p>Direct Print Console</p>
+    <div class="app-shell">
+        <section class="hero">
+            <div class="hero-main">
+                <div class="brand-row">
+                    <div class="brand-logo">
+                        <img src="assets/logo.svg" alt="Print Shop Manager logo">
+                    </div>
+                    <div class="brand-copy">
+                        <p>PC Print Console</p>
+                        <h1>Print Shop Manager</h1>
+                    </div>
+                </div>
+                <div class="hero-copy">
+                    Receive customer files, route jobs to the correct printer, and keep your desktop print counter organized from one screen.
+                </div>
+                <div class="hero-metrics">
+                    <div class="metric-card">
+                        <span>Transfer Mode</span>
+                        <strong>Direct WebRTC</strong>
+                    </div>
+                    <div class="metric-card">
+                        <span>Queue View</span>
+                        <strong>Customer First</strong>
+                    </div>
+                    <div class="metric-card">
+                        <span>Output</span>
+                        <strong>Color + B/W</strong>
+                    </div>
                 </div>
             </div>
-            <span id="statusBadge" class="status offline">Offline</span>
-        </div>
-
-        <div class="settings">
-            <h2>⚙️ Settings</h2>
-            <div id="uiMessage" style="margin-bottom:12px; padding:10px; border-radius:8px; display:none;"></div>
-            <div class="input-group">
-                <label>Shop Code:</label>
-                <input type="text" id="shopId" placeholder="SHOP001">
-            </div>
-            <div class="input-group">
-                <label>Shop Password:</label>
-                <input type="password" id="shopPassword" placeholder="Enter shop password">
-            </div>
-            <div class="input-group">
-                <label>Download Path:</label>
-                <input type="text" id="downloadPath" readonly>
-                <button onclick="selectFolder()" style="margin-top: 5px;">Browse</button>
-            </div>
-            <div class="price-display">
-                <div class="input-group" style="display: inline-block; width: 48%; margin-right: 4%;">
-                    <label>Color Price (per page):</label>
-                    <input type="number" id="colorPrice" step="0.01" value="5.00">
+            <div class="hero-side">
+                <div class="status-panel">
+                    <small>Service Status</small>
+                    <div class="status-line">
+                        <span id="statusBadge" class="status offline">Offline</span>
+                    </div>
+                    <div class="status-note">Start the service after entering your shop code, password, pricing, and printer assignments.</div>
                 </div>
-                <div class="input-group" style="display: inline-block; width: 48%;">
-                    <label>B&W Price (per page):</label>
-                    <input type="number" id="bwPrice" step="0.01" value="2.00">
+                <div class="support-panel">
+                    <small>Workflow</small>
+                    <p>1. Save settings and connect.<br>2. Show QR for customers.<br>3. Print incoming jobs from the queue.</p>
                 </div>
             </div>
-            <div class="input-group">
-                <label>Color Printer:</label>
-                <select id="colorPrinter">
-                    <option value="">Select Color Printer</option>
-                </select>
-            </div>
-            <div class="input-group">
-                <label>B&W Printer:</label>
-                <select id="bwPrinter">
-                    <option value="">Select B&W Printer</option>
-                </select>
-            </div>
-            <button onclick="loadPrinters()">Refresh Printers</button>
-            <button onclick="saveAndStart()">Save & Start Service</button>
-            <button onclick="showQR()">Show QR Code</button>
-        </div>
+        </section>
 
-        <div class="qr-section" id="qrSection" style="display: none;">
-            <h3>Scan to Send Files</h3>
-            <div id="qrCode"></div>
-            <p>Customers can scan this QR code to send files</p>
-            <button onclick="printQR()">Print QR</button>
-        </div>
+        <section class="dashboard-grid">
+            <div class="panel settings-panel">
+                <div class="panel-header">
+                    <div>
+                        <h2>Control Desk</h2>
+                        <p>Configure the shop identity, prices, download folder, and printer routing for this PC.</p>
+                    </div>
+                </div>
 
-        <div class="orders">
-            <h2>📋 Received Orders (<span id="orderCount">0</span>)</h2>
-            <div id="orderList"></div>
-        </div>
+                <div id="uiMessage" class="message-banner"></div>
+
+                <div class="content-pad">
+                    <div class="section-grid">
+                        <div class="field-card">
+                            <label for="shopId">Shop Code</label>
+                            <input type="text" id="shopId" placeholder="SHOP001">
+                            <div class="hint">Use the exact shop code issued in your admin panel.</div>
+                        </div>
+
+                        <div class="field-card">
+                            <label for="shopPassword">Shop Password</label>
+                            <input type="password" id="shopPassword" placeholder="Enter shop password">
+                            <div class="hint">Required before the PC app can go online.</div>
+                        </div>
+
+                        <div class="field-card full">
+                            <label for="downloadPath">Download Folder</label>
+                            <input type="text" id="downloadPath" readonly>
+                            <div class="cta-row" style="margin-top: 12px;">
+                                <button type="button" class="btn-secondary wide" onclick="selectFolder()">Browse Folder</button>
+                            </div>
+                        </div>
+
+                        <div class="field-card accent full">
+                            <label>Pricing</label>
+                            <div class="inline-row">
+                                <div>
+                                    <label for="colorPrice">Color Price Per Page</label>
+                                    <input type="number" id="colorPrice" step="0.01" value="5.00">
+                                </div>
+                                <div>
+                                    <label for="bwPrice">B&W Price Per Page</label>
+                                    <input type="number" id="bwPrice" step="0.01" value="2.00">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="field-card">
+                            <label for="colorPrinter">Color Printer</label>
+                            <select id="colorPrinter">
+                                <option value="">Select Color Printer</option>
+                            </select>
+                        </div>
+
+                        <div class="field-card">
+                            <label for="bwPrinter">B&W Printer</label>
+                            <select id="bwPrinter">
+                                <option value="">Select B&amp;W Printer</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="cta-row">
+                        <button type="button" class="btn-secondary" onclick="loadPrinters()">Refresh Printers</button>
+                        <button type="button" class="btn-accent" onclick="showQR()">Show QR Code</button>
+                        <button type="button" class="wide" onclick="saveAndStart()">Save and Start Service</button>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <div class="panel qr-panel" id="qrSection" style="display: none; margin-bottom: 22px;">
+                    <div class="panel-header">
+                        <div>
+                            <h3>Customer QR</h3>
+                            <p>Customers can scan this code to send files directly to this print desk.</p>
+                        </div>
+                    </div>
+                    <div class="qr-wrap">
+                        <div id="qrCode"></div>
+                        <p style="color: var(--muted); margin-bottom: 14px;">Keep this visible near the counter for quick walk-in transfers.</p>
+                        <button type="button" class="btn-accent" onclick="printQR()">Print QR Sheet</button>
+                    </div>
+                </div>
+
+                <div class="panel orders-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h3>Incoming Queue</h3>
+                            <p>Jobs are grouped by customer. Print the first customer group before moving to the next.</p>
+                        </div>
+                        <div class="mini-stat">
+                            <small>Orders</small>
+                            <strong id="orderCount">0</strong>
+                        </div>
+                    </div>
+                    <div id="orderList" class="content-pad">
+                        <div class="orders-empty">No orders yet</div>
+                    </div>
+                </div>
+            </div>
+        </section>
     </div>
 
-    <!-- Print Dialog Modal -->
     <div id="printModal" class="modal" style="display:none;">
         <div class="modal-content">
-            <h2>🖨️ Print Job</h2>
+            <h2>Print Job</h2>
             <div id="printDetails"></div>
             <div class="modal-buttons">
-                <button onclick="confirmPrint()" class="btn-print">✓ Print Now</button>
-                <button onclick="closePrintModal()" class="btn-cancel">Cancel</button>
+                <button type="button" onclick="confirmPrint()" class="btn-print">Print Now</button>
+                <button type="button" onclick="closePrintModal()" class="btn-cancel">Cancel</button>
             </div>
         </div>
     </div>

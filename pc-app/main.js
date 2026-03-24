@@ -123,7 +123,11 @@ function getAppIconPath() {
 
 app.whenReady().then(createWindow);
 
-app.on('window-all-closed', () => {});
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
+});
 app.on('child-process-gone', (event, details) => {
     log('Child process gone:', details);
 });

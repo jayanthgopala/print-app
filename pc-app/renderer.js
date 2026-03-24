@@ -558,7 +558,7 @@ function renderOrders() {
     document.getElementById('orderCount').textContent = activeOrders.length;
 
     if (activeOrders.length === 0) {
-        document.getElementById('orderList').innerHTML = '<p style="text-align:center; color:#999; padding:40px;">No orders yet</p>';
+        document.getElementById('orderList').innerHTML = '<div class="orders-empty">No orders yet</div>';
         return;
     }
 
@@ -577,7 +577,6 @@ function renderOrders() {
     
     // Show only the first customer group
     const html = customerGroups.slice(0, 1).map(([customerName, customerOrders]) => {
-        const allPrinted = customerOrders.every(o => o.printed);
         return `
             <div class="customer-group">
                 <div class="customer-header">
@@ -822,3 +821,57 @@ function escapeHtml(text) {
     const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return String(text).replace(/[&<>"']/g, m => map[m]);
 }
+
+renderOrders = function renderOrdersPatched() {
+    const activeOrders = orders.filter((o) => !o.printed && !o.skipped);
+    document.getElementById('orderCount').textContent = activeOrders.length;
+
+    if (activeOrders.length === 0) {
+        document.getElementById('orderList').innerHTML = '<div class="orders-empty">No orders yet</div>';
+        return;
+    }
+
+    const grouped = new Map();
+    activeOrders.forEach((order) => {
+        const key = order.customerName || 'Unknown';
+        if (!grouped.has(key)) {
+            grouped.set(key, []);
+        }
+        grouped.get(key).push(order);
+    });
+
+    const customerGroups = Array.from(grouped.entries());
+    const html = customerGroups.slice(0, 1).map(([customerName, customerOrders]) => `
+        <div class="customer-group">
+            <div class="customer-header">
+                <div style="display:flex; align-items:center; gap:10px; flex:1; flex-wrap:wrap;">
+                    <strong>Customer: ${escapeHtml(customerName)}</strong>
+                    <span style="color:#fff; font-size:13px;">${customerOrders[0].timestamp}</span>
+                    <span style="color:#e3f2fd;">${customerOrders.length} file(s)</span>
+                </div>
+                <button onclick="skipCustomer('${escapeHtml(customerName)}')" class="btn-skip" title="Skip this customer">
+                    Skip Customer
+                </button>
+            </div>
+            ${customerOrders.map((order) => `
+                <div class="order-item" style="margin-left:20px;">
+                    <div class="order-header">
+                        <div>
+                            <div><strong>File:</strong> ${escapeHtml(order.fileName)}</div>
+                            ${order.colorPages ? `<div style="font-size:13px;"><strong>Color Pages:</strong> ${escapeHtml(order.colorPages)} (@ Rs ${colorPrice}/page)</div>` : ''}
+                            ${order.bwPages ? `<div style="font-size:13px;"><strong>B&W Pages:</strong> ${escapeHtml(order.bwPages)} (@ Rs ${bwPrice}/page)</div>` : ''}
+                            <div style="font-size:13px;"><strong>Paper:</strong> ${escapeHtml(order.paperSize || 'A4')} | <strong>Layout:</strong> ${escapeHtml(order.orientation || 'portrait')} | <strong>Copies:</strong> ${escapeHtml(order.copies || 1)}</div>
+                            <div style="font-size:13px;"><strong>Sides:</strong> ${escapeHtml(order.duplex || 'simplex')} | <strong>Scale:</strong> ${escapeHtml(order.scale || 'fit')}</div>
+                        </div>
+                        <button class="print-btn" data-filepath="${escapeHtml(order.filePath)}" data-orderid="${order.id}" onclick="printFileFromButton(this)" ${order.printed ? 'disabled' : ''}>
+                            ${order.printed ? 'Printed' : 'Print'}
+                        </button>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `).join('');
+
+    document.getElementById('orderList').innerHTML = html +
+        (customerGroups.length > 1 ? `<div class="orders-empty">${customerGroups.length - 1} more customer(s) waiting...</div>` : '');
+};
