@@ -10,7 +10,8 @@ const ICE_SERVERS = [
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' }
 ];
-const CONNECTION_TIMEOUT_MS = 30000; // 30 seconds for slow connections
+const CONNECTION_TIMEOUT_MS = 120000;
+const DISCONNECT_GRACE_PERIOD_MS = 15000;
 
 class ShopReceiver {
     constructor(shopId, token, signalingUrl, downloadPath, onFileReceived) {
@@ -22,6 +23,30 @@ class ShopReceiver {
         this.ws = null;
         this.shouldReconnect = true;
         this.transfers = new Map();
+    }
+
+    clearTransferTimers(transfer) {
+        if (transfer.connectionTimeout) {
+            clearTimeout(transfer.connectionTimeout);
+            transfer.connectionTimeout = null;
+        }
+        if (transfer.disconnectTimeout) {
+            clearTimeout(transfer.disconnectTimeout);
+            transfer.disconnectTimeout = null;
+        }
+    }
+
+    scheduleDisconnectFailure(transferId, transfer, reason) {
+        if (transfer.completed || transfer.disconnectTimeout) {
+            return;
+        }
+
+        transfer.disconnectTimeout = setTimeout(() => {
+            transfer.disconnectTimeout = null;
+            if (!transfer.completed) {
+                this.failTransfer(transferId, reason);
+            }
+        }, DISCONNECT_GRACE_PERIOD_MS);
     }
 
     log(...args) {
@@ -97,7 +122,8 @@ class ShopReceiver {
                 bytesReceived: 0,
                 completed: false,
                 cleanedUp: false,
-                connectionTimeout: null
+                connectionTimeout: null,
+                disconnectTimeout: null
             };
             this.transfers.set(transferId, transfer);
 
@@ -127,6 +153,11 @@ class ShopReceiver {
                 // Only fail on permanent failure, not temporary disconnections
                 if (peer.iceConnectionState === 'failed' && !transfer.completed) {
                     this.failTransfer(transferId, 'Connection failed');
+                } else if (peer.iceConnectionState === 'disconnected') {
+                    this.scheduleDisconnectFailure(transferId, transfer, 'Connection interrupted for too long');
+                } else if (['connected', 'completed'].includes(peer.iceConnectionState) && transfer.disconnectTimeout) {
+                    clearTimeout(transfer.disconnectTimeout);
+                    transfer.disconnectTimeout = null;
                 }
             };
 
@@ -135,6 +166,11 @@ class ShopReceiver {
                 if (transfer.completed) return;
                 if (peer.connectionState === 'failed') {
                     this.failTransfer(transferId, `Peer connection failed`);
+                } else if (peer.connectionState === 'disconnected') {
+                    this.scheduleDisconnectFailure(transferId, transfer, 'Connection interrupted for too long');
+                } else if (['connected', 'completed'].includes(peer.connectionState) && transfer.disconnectTimeout) {
+                    clearTimeout(transfer.disconnectTimeout);
+                    transfer.disconnectTimeout = null;
                 } else if (peer.connectionState === 'connected') {
                     this.log('Peer connected successfully');
                 }
@@ -157,7 +193,7 @@ class ShopReceiver {
                 transfer.channel.onerror = () => this.failTransfer(transferId, 'Data channel error');
                 transfer.channel.onclose = () => {
                     if (!transfer.completed) {
-                        this.failTransfer(transferId, 'Data channel closed');
+                        this.scheduleDisconnectFailure(transferId, transfer, 'Data channel closed before transfer completed');
                     }
                 };
             };
@@ -249,10 +285,7 @@ class ShopReceiver {
             transfer.completed = true;
 
             // Clear timeout on successful completion
-            if (transfer.connectionTimeout) {
-                clearTimeout(transfer.connectionTimeout);
-                transfer.connectionTimeout = null;
-            }
+            this.clearTransferTimers(transfer);
 
             this.log('Transfer completed:', { transferId, filePath, bytesReceived: transfer.bytesReceived });
 
@@ -313,10 +346,7 @@ class ShopReceiver {
         }
 
         // Clear timeout
-        if (transfer.connectionTimeout) {
-            clearTimeout(transfer.connectionTimeout);
-            transfer.connectionTimeout = null;
-        }
+        this.clearTransferTimers(transfer);
 
         if (transfer && transfer.channel && transfer.channel.readyState === 'open') {
             try {
@@ -334,10 +364,7 @@ class ShopReceiver {
         transfer.cleanedUp = true;
 
         // Clear timeout
-        if (transfer.connectionTimeout) {
-            clearTimeout(transfer.connectionTimeout);
-            transfer.connectionTimeout = null;
-        }
+        this.clearTransferTimers(transfer);
 
         const finish = () => {
             this.transfers.delete(transferId);

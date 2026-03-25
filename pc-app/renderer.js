@@ -7,6 +7,13 @@ let colorPrinter = '';
 let bwPrinter = '';
 let receiverService = null;
 let currentQrDataUrl = '';
+const DEFAULT_ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' }
+];
+const CONNECTION_TIMEOUT_MS = 120000;
+const DISCONNECT_GRACE_PERIOD_MS = 15000;
 
 class ShopReceiverClient {
     constructor({ shopId, token, wsUrl, onStatusChange, onFileReceived, onLog }) {
@@ -19,6 +26,30 @@ class ShopReceiverClient {
         this.ws = null;
         this.shouldReconnect = true;
         this.transfers = new Map();
+    }
+
+    clearTransferTimers(transfer) {
+        if (transfer.connectionTimeout) {
+            clearTimeout(transfer.connectionTimeout);
+            transfer.connectionTimeout = null;
+        }
+        if (transfer.disconnectTimeout) {
+            clearTimeout(transfer.disconnectTimeout);
+            transfer.disconnectTimeout = null;
+        }
+    }
+
+    scheduleDisconnectFailure(transferId, transfer, reason) {
+        if (transfer.completed || transfer.disconnectTimeout) {
+            return;
+        }
+
+        transfer.disconnectTimeout = setTimeout(() => {
+            transfer.disconnectTimeout = null;
+            if (!transfer.completed) {
+                this.failTransfer(transferId, reason);
+            }
+        }, DISCONNECT_GRACE_PERIOD_MS);
     }
 
     log(...args) {
@@ -100,7 +131,10 @@ class ShopReceiverClient {
         const { transferId, clientId, offer, metadata } = message;
         this.validateMetadata(metadata);
 
-        const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        const peer = new RTCPeerConnection({
+            iceServers: DEFAULT_ICE_SERVERS,
+            iceCandidatePoolSize: 10
+        });
         const transfer = {
             transferId,
             clientId,
@@ -109,7 +143,13 @@ class ShopReceiverClient {
             channel: null,
             chunks: [],
             bytesReceived: 0,
-            completed: false
+            completed: false,
+            connectionTimeout: setTimeout(() => {
+                if (!transfer.completed && (!transfer.channel || transfer.channel.readyState !== 'open')) {
+                    this.failTransfer(transferId, 'Connection timeout. Please retry.');
+                }
+            }, CONNECTION_TIMEOUT_MS),
+            disconnectTimeout: null
         };
         this.transfers.set(transferId, transfer);
 
@@ -124,19 +164,36 @@ class ShopReceiverClient {
 
         peer.onconnectionstatechange = () => {
             if (transfer.completed) return;
-            if (['failed', 'disconnected', 'closed'].includes(peer.connectionState)) {
-                this.failTransfer(transferId, `Peer connection ${peer.connectionState}`);
+            if (peer.connectionState === 'failed') {
+                this.failTransfer(transferId, 'Peer connection failed');
+            } else if (peer.connectionState === 'disconnected') {
+                this.scheduleDisconnectFailure(transferId, transfer, 'Connection interrupted for too long');
+            } else if (['connected', 'completed'].includes(peer.connectionState) && transfer.disconnectTimeout) {
+                clearTimeout(transfer.disconnectTimeout);
+                transfer.disconnectTimeout = null;
+            } else if (peer.connectionState === 'closed' && !transfer.completed) {
+                this.failTransfer(transferId, 'Peer connection closed');
             }
         };
 
         peer.ondatachannel = (event) => {
             transfer.channel = event.channel;
             event.channel.binaryType = 'arraybuffer';
+            event.channel.onopen = () => {
+                if (transfer.connectionTimeout) {
+                    clearTimeout(transfer.connectionTimeout);
+                    transfer.connectionTimeout = null;
+                }
+                if (transfer.disconnectTimeout) {
+                    clearTimeout(transfer.disconnectTimeout);
+                    transfer.disconnectTimeout = null;
+                }
+            };
             event.channel.onmessage = (msg) => this.handleChannelMessage(transferId, msg.data);
             event.channel.onerror = () => this.failTransfer(transferId, 'Data channel error');
             event.channel.onclose = () => {
                 if (!transfer.completed) {
-                    this.failTransfer(transferId, 'Data channel closed');
+                    this.scheduleDisconnectFailure(transferId, transfer, 'Data channel closed before transfer completed');
                 }
             };
         };
@@ -231,6 +288,7 @@ class ShopReceiverClient {
             }
 
             transfer.completed = true;
+            this.clearTransferTimers(transfer);
             if (transfer.channel && transfer.channel.readyState === 'open') {
                 transfer.channel.send(JSON.stringify({ type: 'FILE_RECEIVED' }));
             }
@@ -282,6 +340,7 @@ class ShopReceiverClient {
             this.cleanupTransfer(transferId);
             return;
         }
+        this.clearTransferTimers(transfer);
         if (transfer.channel && transfer.channel.readyState === 'open') {
             transfer.channel.send(JSON.stringify({ type: 'TRANSFER_ERROR', reason }));
         }
@@ -292,6 +351,7 @@ class ShopReceiverClient {
     cleanupTransfer(transferId) {
         const transfer = this.transfers.get(transferId);
         if (!transfer) return;
+        this.clearTransferTimers(transfer);
         try {
             transfer.channel?.close();
         } catch {}

@@ -5,11 +5,11 @@ const DEFAULT_ICE_SERVERS = [
 ];
 
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
-const CHUNK_SIZE = 256 * 1024; // Increased from 64KB to 256KB for faster transfer
-const MAX_BUFFERED_AMOUNT = CHUNK_SIZE * 8; // Buffer up to 2MB before pausing
-const MIN_BUFFERED_AMOUNT = CHUNK_SIZE * 2; // Resume when buffer drops to 512KB
-const CONNECTION_TIMEOUT_MS = 30000; // 30 seconds for slow connections
-const ICE_GATHERING_TIMEOUT_MS = 15000; // 15 seconds to gather ICE candidates
+const CHUNK_SIZE = 64 * 1024;
+const MAX_BUFFERED_AMOUNT = CHUNK_SIZE * 8;
+const CONNECTION_TIMEOUT_MS = 120000;
+const ICE_GATHERING_TIMEOUT_MS = 20000; // 20 seconds to gather ICE candidates
+const DISCONNECT_GRACE_PERIOD_MS = 15000;
 const ALLOWED_TYPES = new Set([
     'application/pdf',
     'application/msword',
@@ -27,6 +27,34 @@ export class FileTransferClient {
         this.ws = null;
         this.clientId = crypto.randomUUID();
         this.pendingTransfers = new Map();
+    }
+
+    clearTransferTimers(transfer) {
+        if (transfer.connectionTimeout) {
+            clearTimeout(transfer.connectionTimeout);
+            transfer.connectionTimeout = null;
+        }
+        if (transfer.iceTimeout) {
+            clearTimeout(transfer.iceTimeout);
+            transfer.iceTimeout = null;
+        }
+        if (transfer.disconnectTimeout) {
+            clearTimeout(transfer.disconnectTimeout);
+            transfer.disconnectTimeout = null;
+        }
+    }
+
+    scheduleDisconnectFailure(transferId, transfer, reason) {
+        if (transfer.acknowledged || transfer.disconnectTimeout) {
+            return;
+        }
+
+        transfer.disconnectTimeout = setTimeout(() => {
+            if (!transfer.acknowledged) {
+                transfer.disconnectTimeout = null;
+                transfer.rejectOnce(new Error(reason));
+            }
+        }, DISCONNECT_GRACE_PERIOD_MS);
     }
 
     connect() {
@@ -71,8 +99,7 @@ export class FileTransferClient {
             iceCandidatePoolSize: 10
         });
         const channel = peer.createDataChannel('printshop-transfer', {
-            ordered: true,
-            maxRetransmits: 30
+            ordered: true
         });
 
         return new Promise(async (resolve, reject) => {
@@ -85,22 +112,33 @@ export class FileTransferClient {
                 reject,
                 acknowledged: false,
                 connectionTimeout: null,
-                iceTimeout: null
+                iceTimeout: null,
+                disconnectTimeout: null,
+                settled: false
             };
             this.pendingTransfers.set(transferId, transfer);
 
-            const failTransfer = (error) => {
+            transfer.rejectOnce = (error) => {
+                if (transfer.settled) return;
+                transfer.settled = true;
                 const err = error instanceof Error ? error : new Error(String(error));
-                if (transfer.connectionTimeout) clearTimeout(transfer.connectionTimeout);
-                if (transfer.iceTimeout) clearTimeout(transfer.iceTimeout);
+                this.clearTransferTimers(transfer);
                 this.cleanupTransfer(transferId);
                 reject(err);
+            };
+
+            transfer.resolveOnce = () => {
+                if (transfer.settled) return;
+                transfer.settled = true;
+                this.clearTransferTimers(transfer);
+                this.cleanupTransfer(transferId);
+                resolve();
             };
 
             // Connection timeout for slow networks
             transfer.connectionTimeout = setTimeout(() => {
                 if (!transfer.acknowledged && channel.readyState !== 'open') {
-                    failTransfer(new Error('Connection timeout. Please check your internet connection and try again.'));
+                    transfer.rejectOnce(new Error('Connection timeout. Please check your internet connection and try again.'));
                 }
             }, CONNECTION_TIMEOUT_MS);
 
@@ -133,26 +171,36 @@ export class FileTransferClient {
                 console.log(`ICE connection state: ${peer.iceConnectionState}`);
                 // Only fail if truly failed, not just disconnected (which can recover)
                 if (peer.iceConnectionState === 'failed' && !transfer.acknowledged) {
-                    failTransfer(new Error('Connection failed. Please check your internet and try again.'));
+                    transfer.rejectOnce(new Error('Connection failed. Please check your internet and try again.'));
+                } else if (peer.iceConnectionState === 'disconnected') {
+                    this.scheduleDisconnectFailure(transferId, transfer, 'Connection was interrupted for too long. Please retry the transfer.');
+                } else if (['connected', 'completed'].includes(peer.iceConnectionState) && transfer.disconnectTimeout) {
+                    clearTimeout(transfer.disconnectTimeout);
+                    transfer.disconnectTimeout = null;
                 }
             };
 
             peer.onconnectionstatechange = () => {
                 console.log(`Peer connection state: ${peer.connectionState}`);
-                // Only fail on permanent failures, allow temporary disconnections
                 if (peer.connectionState === 'failed' && !transfer.acknowledged) {
-                    failTransfer(new Error('Connection failed. Please retry the transfer.'));
-                } else if (peer.connectionState === 'connected') {
+                    transfer.rejectOnce(new Error('Connection failed. Please retry the transfer.'));
+                } else if (peer.connectionState === 'disconnected') {
+                    this.scheduleDisconnectFailure(transferId, transfer, 'Connection was interrupted for too long. Please retry the transfer.');
+                } else if (['connected', 'completed'].includes(peer.connectionState)) {
+                    if (transfer.disconnectTimeout) {
+                        clearTimeout(transfer.disconnectTimeout);
+                        transfer.disconnectTimeout = null;
+                    }
                     console.log('Peer connected successfully');
+                } else if (peer.connectionState === 'closed' && !transfer.acknowledged) {
+                    transfer.rejectOnce(new Error('Connection closed before the transfer completed.'));
                 }
             };
 
             channel.binaryType = 'arraybuffer';
             channel.onopen = async () => {
                 console.log('Data channel opened');
-                if (transfer.connectionTimeout) {
-                    clearTimeout(transfer.connectionTimeout);
-                }
+                if (transfer.connectionTimeout) clearTimeout(transfer.connectionTimeout);
                 try {
                     await this.sendFileOverChannel(channel, file, {
                         ...metadata,
@@ -161,7 +209,7 @@ export class FileTransferClient {
                         fileType: file.type || 'application/octet-stream'
                     });
                 } catch (error) {
-                    failTransfer(error);
+                    transfer.rejectOnce(error);
                 }
             };
 
@@ -171,21 +219,23 @@ export class FileTransferClient {
                     const message = JSON.parse(event.data);
                     if (message.type === 'FILE_RECEIVED') {
                         transfer.acknowledged = true;
-                        if (transfer.connectionTimeout) clearTimeout(transfer.connectionTimeout);
-                        if (transfer.iceTimeout) clearTimeout(transfer.iceTimeout);
                         this.onProgress(100);
                         this.onStatusChange('COMPLETED');
-                        this.cleanupTransfer(transferId);
-                        resolve();
+                        transfer.resolveOnce();
                     } else if (message.type === 'TRANSFER_ERROR') {
-                        failTransfer(new Error(message.reason || 'Transfer failed'));
+                        transfer.rejectOnce(new Error(message.reason || 'Transfer failed'));
                     }
                 } catch (error) {
-                    failTransfer(error);
+                    transfer.rejectOnce(error);
                 }
             };
 
-            channel.onerror = () => failTransfer(new Error('Data channel error'));
+            channel.onerror = () => transfer.rejectOnce(new Error('Data channel error'));
+            channel.onclose = () => {
+                if (!transfer.acknowledged && !transfer.settled) {
+                    this.scheduleDisconnectFailure(transferId, transfer, 'Data channel closed before the transfer completed.');
+                }
+            };
 
             try {
                 const offer = await peer.createOffer();
@@ -217,7 +267,7 @@ export class FileTransferClient {
 
                 this.onStatusChange('CONNECTING');
             } catch (error) {
-                failTransfer(error);
+                transfer.rejectOnce(error);
             }
         });
     }
@@ -250,8 +300,7 @@ export class FileTransferClient {
             } else if (data.state === 'FAILED') {
                 const transfer = this.pendingTransfers.get(data.transferId);
                 if (transfer) {
-                    transfer.reject(new Error(data.details || 'Transfer failed'));
-                    this.cleanupTransfer(data.transferId);
+                    transfer.rejectOnce(new Error(data.details || 'Transfer failed'));
                 }
             }
             return;
@@ -260,8 +309,7 @@ export class FileTransferClient {
         if (data.type === 'TRANSFER_ERROR') {
             const transfer = this.pendingTransfers.get(data.transferId);
             if (transfer) {
-                transfer.reject(new Error(data.reason || 'Transfer setup failed'));
-                this.cleanupTransfer(data.transferId);
+                transfer.rejectOnce(new Error(data.reason || 'Transfer setup failed'));
             }
             this.onStatusChange('ERROR');
         }
@@ -269,15 +317,26 @@ export class FileTransferClient {
 
     async sendFileOverChannel(channel, file, metadata) {
         channel.send(JSON.stringify({ type: 'FILE_METADATA', metadata }));
+        channel.bufferedAmountLowThreshold = CHUNK_SIZE * 2;
 
         let offset = 0;
         const totalSize = file.size;
         const startTime = Date.now();
 
         while (offset < totalSize) {
-            // Wait if buffer is too full
             while (channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-                await new Promise(resolve => setTimeout(resolve, 50));
+                await new Promise((resolve) => {
+                    const resumeSend = () => {
+                        channel.removeEventListener('bufferedamountlow', resumeSend);
+                        resolve();
+                    };
+
+                    channel.addEventListener('bufferedamountlow', resumeSend, { once: true });
+                    if (channel.bufferedAmount <= channel.bufferedAmountLowThreshold) {
+                        channel.removeEventListener('bufferedamountlow', resumeSend);
+                        resolve();
+                    }
+                });
             }
 
             const slice = file.slice(offset, offset + CHUNK_SIZE);
@@ -318,6 +377,8 @@ export class FileTransferClient {
     cleanupTransfer(transferId) {
         const transfer = this.pendingTransfers.get(transferId);
         if (!transfer) return;
+
+        this.clearTransferTimers(transfer);
 
         try {
             transfer.channel?.close();
