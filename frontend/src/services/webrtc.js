@@ -15,14 +15,21 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 export class FileTransferClient {
-    constructor(shopId, signalingUrl, onStatusChange, onProgress) {
+    constructor(shopId, signalingUrl, onStatusChange, onProgress, iceServers = ICE_SERVERS) {
         this.shopId = shopId;
         this.signalingUrl = signalingUrl;
         this.onStatusChange = onStatusChange;
         this.onProgress = onProgress;
+        this.iceServers = Array.isArray(iceServers) && iceServers.length > 0 ? iceServers : ICE_SERVERS;
         this.ws = null;
         this.clientId = crypto.randomUUID();
         this.pendingTransfers = new Map();
+    }
+
+    setIceServers(iceServers) {
+        if (Array.isArray(iceServers) && iceServers.length > 0) {
+            this.iceServers = iceServers;
+        }
     }
 
     clearTransferTimers(transfer) {
@@ -91,7 +98,7 @@ export class FileTransferClient {
 
         const transferId = crypto.randomUUID();
         const peer = new RTCPeerConnection({
-            iceServers: ICE_SERVERS,
+            iceServers: this.iceServers,
             iceCandidatePoolSize: 10
         });
         const channel = peer.createDataChannel('printshop-transfer', {

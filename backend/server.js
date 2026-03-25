@@ -127,6 +127,10 @@ export default {
                 return handlePcStatus(request, env);
             }
 
+            if (request.method === 'POST' && url.pathname === '/turn/ice-servers') {
+                return handleTurnIceServers(request, env);
+            }
+
             if (request.method === 'POST' && url.pathname === '/share') {
                 const shopId = url.searchParams.get('shop') || '';
                 return redirect(`/?shop=${encodeURIComponent(shopId)}&shared=true`, request, env);
@@ -902,6 +906,55 @@ async function handlePcStatus(request, env) {
         console.error('PC status update error:', error);
         return json({ error: 'Internal server error' }, 500, request, env);
     }
+}
+
+async function handleTurnIceServers(request, env) {
+    if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
+        return json({ error: 'TURN is not configured on the server' }, 503, request, env);
+    }
+
+    let body = {};
+    try {
+        body = await request.json();
+    } catch {}
+
+    const shopCode = normalizeShopCode(body.shopId || body.shopCode);
+    if (!shopCode) {
+        return json({ error: 'shopId is required' }, 400, request, env);
+    }
+
+    const shop = await dbGetShopByCode(env, shopCode);
+    if (!shop) {
+        return json({ error: 'Shop not found' }, 404, request, env);
+    }
+
+    const ttl = Math.max(300, Math.min(Number(body.ttl || 3600), 172800));
+    const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ ttl })
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error('TURN credential generation failed:', response.status, errorText);
+        return json({ error: 'Failed to generate TURN credentials' }, 502, request, env);
+    }
+
+    const payload = await response.json();
+    const iceServers = Array.isArray(payload.iceServers)
+        ? payload.iceServers.map((server) => ({
+            ...server,
+            urls: Array.isArray(server.urls)
+                ? server.urls.filter((url) => !String(url).includes(':53'))
+                : server.urls
+        })).filter((server) => Array.isArray(server.urls) ? server.urls.length > 0 : Boolean(server.urls))
+        : [];
+
+    return json({ iceServers, ttl }, 200, request, env);
 }
 
 async function requireAdmin(request, env) {

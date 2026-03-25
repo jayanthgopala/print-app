@@ -125,6 +125,19 @@ export default function App() {
         transferClientRef.current = client;
         setShopId(normalizedShopId);
 
+        fetch(`${API_URL}/turn/ice-servers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shopId: normalizedShopId, ttl: 3600 })
+        })
+            .then((r) => r.ok ? r.json() : null)
+            .then((data) => {
+                if (data?.iceServers?.length) {
+                    client.setIceServers(data.iceServers);
+                }
+            })
+            .catch(() => {});
+
         fetch(`${API_URL}/shop/public/${encodeURIComponent(normalizedShopId)}`)
             .then((r) => r.json())
             .then((data) => {

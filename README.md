@@ -391,6 +391,14 @@ PC app relay configuration:
 - `TURN_USERNAME=your-username`
 - `TURN_CREDENTIAL=your-password`
 
+Cloudflare Workers fit:
+
+- keep `backend/server.js` as the signaling and credential-minting Worker
+- do not try to run TURN inside the Worker
+- create a Cloudflare Realtime TURN key in your account
+- store `TURN_KEY_ID` and `TURN_KEY_API_TOKEN` as Worker secrets
+- call the Worker endpoint `/turn/ice-servers` to get short-lived `iceServers`
+
 ### Electron / `wrtc`
 
 If the PC app fails because of native module issues, rebuild Electron dependencies:
