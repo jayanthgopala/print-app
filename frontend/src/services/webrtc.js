@@ -1,11 +1,15 @@
 const DEFAULT_ICE_SERVERS = [
-    { urls: 'stun:stun.l.google.com:19302' }
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' }
 ];
 
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 const CHUNK_SIZE = 256 * 1024; // Increased from 64KB to 256KB for faster transfer
 const MAX_BUFFERED_AMOUNT = CHUNK_SIZE * 8; // Buffer up to 2MB before pausing
 const MIN_BUFFERED_AMOUNT = CHUNK_SIZE * 2; // Resume when buffer drops to 512KB
+const CONNECTION_TIMEOUT_MS = 30000; // 30 seconds for slow connections
+const ICE_GATHERING_TIMEOUT_MS = 15000; // 15 seconds to gather ICE candidates
 const ALLOWED_TYPES = new Set([
     'application/pdf',
     'application/msword',
@@ -62,8 +66,14 @@ export class FileTransferClient {
         this.validateFile(file);
 
         const transferId = crypto.randomUUID();
-        const peer = new RTCPeerConnection({ iceServers: DEFAULT_ICE_SERVERS });
-        const channel = peer.createDataChannel('printshop-transfer', { ordered: true });
+        const peer = new RTCPeerConnection({
+            iceServers: DEFAULT_ICE_SERVERS,
+            iceCandidatePoolSize: 10
+        });
+        const channel = peer.createDataChannel('printshop-transfer', {
+            ordered: true,
+            maxRetransmits: 30
+        });
 
         return new Promise(async (resolve, reject) => {
             const transfer = {
@@ -73,15 +83,33 @@ export class FileTransferClient {
                 channel,
                 resolve,
                 reject,
-                acknowledged: false
+                acknowledged: false,
+                connectionTimeout: null,
+                iceTimeout: null
             };
             this.pendingTransfers.set(transferId, transfer);
 
             const failTransfer = (error) => {
                 const err = error instanceof Error ? error : new Error(String(error));
+                if (transfer.connectionTimeout) clearTimeout(transfer.connectionTimeout);
+                if (transfer.iceTimeout) clearTimeout(transfer.iceTimeout);
                 this.cleanupTransfer(transferId);
                 reject(err);
             };
+
+            // Connection timeout for slow networks
+            transfer.connectionTimeout = setTimeout(() => {
+                if (!transfer.acknowledged && channel.readyState !== 'open') {
+                    failTransfer(new Error('Connection timeout. Please check your internet connection and try again.'));
+                }
+            }, CONNECTION_TIMEOUT_MS);
+
+            // ICE gathering timeout
+            transfer.iceTimeout = setTimeout(() => {
+                if (peer.iceGatheringState !== 'complete') {
+                    console.warn('ICE gathering taking longer than expected on slow connection');
+                }
+            }, ICE_GATHERING_TIMEOUT_MS);
 
             peer.onicecandidate = (event) => {
                 if (!event.candidate || !this.isSocketOpen()) return;
@@ -94,14 +122,37 @@ export class FileTransferClient {
                 }));
             };
 
+            peer.onicegatheringstatechange = () => {
+                console.log(`ICE gathering state: ${peer.iceGatheringState}`);
+                if (peer.iceGatheringState === 'complete' && transfer.iceTimeout) {
+                    clearTimeout(transfer.iceTimeout);
+                }
+            };
+
+            peer.oniceconnectionstatechange = () => {
+                console.log(`ICE connection state: ${peer.iceConnectionState}`);
+                // Only fail if truly failed, not just disconnected (which can recover)
+                if (peer.iceConnectionState === 'failed' && !transfer.acknowledged) {
+                    failTransfer(new Error('Connection failed. Please check your internet and try again.'));
+                }
+            };
+
             peer.onconnectionstatechange = () => {
-                if (['failed', 'closed', 'disconnected'].includes(peer.connectionState) && !transfer.acknowledged) {
-                    failTransfer(new Error(`Peer connection ${peer.connectionState}`));
+                console.log(`Peer connection state: ${peer.connectionState}`);
+                // Only fail on permanent failures, allow temporary disconnections
+                if (peer.connectionState === 'failed' && !transfer.acknowledged) {
+                    failTransfer(new Error('Connection failed. Please retry the transfer.'));
+                } else if (peer.connectionState === 'connected') {
+                    console.log('Peer connected successfully');
                 }
             };
 
             channel.binaryType = 'arraybuffer';
             channel.onopen = async () => {
+                console.log('Data channel opened');
+                if (transfer.connectionTimeout) {
+                    clearTimeout(transfer.connectionTimeout);
+                }
                 try {
                     await this.sendFileOverChannel(channel, file, {
                         ...metadata,
@@ -120,6 +171,8 @@ export class FileTransferClient {
                     const message = JSON.parse(event.data);
                     if (message.type === 'FILE_RECEIVED') {
                         transfer.acknowledged = true;
+                        if (transfer.connectionTimeout) clearTimeout(transfer.connectionTimeout);
+                        if (transfer.iceTimeout) clearTimeout(transfer.iceTimeout);
                         this.onProgress(100);
                         this.onStatusChange('COMPLETED');
                         this.cleanupTransfer(transferId);

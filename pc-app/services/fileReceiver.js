@@ -5,7 +5,12 @@ const path = require('path');
 
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']);
-const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' }
+];
+const CONNECTION_TIMEOUT_MS = 30000; // 30 seconds for slow connections
 
 class ShopReceiver {
     constructor(shopId, token, signalingUrl, downloadPath, onFileReceived) {
@@ -78,7 +83,10 @@ class ShopReceiver {
         try {
             this.validateMetadata(metadata);
 
-            const peer = new wrtc.RTCPeerConnection({ iceServers: ICE_SERVERS });
+            const peer = new wrtc.RTCPeerConnection({
+                iceServers: ICE_SERVERS,
+                iceCandidatePoolSize: 10
+            });
             const transfer = {
                 peer,
                 channel: null,
@@ -88,9 +96,18 @@ class ShopReceiver {
                 chunks: [],
                 bytesReceived: 0,
                 completed: false,
-                cleanedUp: false
+                cleanedUp: false,
+                connectionTimeout: null
             };
             this.transfers.set(transferId, transfer);
+
+            // Connection timeout for slow networks
+            transfer.connectionTimeout = setTimeout(() => {
+                if (!transfer.completed && (!transfer.channel || transfer.channel.readyState !== 'open')) {
+                    this.log('Connection timeout on slow network');
+                    this.failTransfer(transferId, 'Connection timeout. Please retry.');
+                }
+            }, CONNECTION_TIMEOUT_MS);
 
             peer.onicecandidate = (event) => {
                 if (!event.candidate || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
@@ -101,15 +118,41 @@ class ShopReceiver {
                 }));
             };
 
+            peer.onicegatheringstatechange = () => {
+                this.log(`ICE gathering state: ${peer.iceGatheringState}`);
+            };
+
+            peer.oniceconnectionstatechange = () => {
+                this.log(`ICE connection state: ${peer.iceConnectionState}`);
+                // Only fail on permanent failure, not temporary disconnections
+                if (peer.iceConnectionState === 'failed' && !transfer.completed) {
+                    this.failTransfer(transferId, 'Connection failed');
+                }
+            };
+
             peer.onconnectionstatechange = () => {
+                this.log(`Peer connection state: ${peer.connectionState}`);
                 if (transfer.completed) return;
-                if (['failed', 'disconnected', 'closed'].includes(peer.connectionState)) {
-                    this.failTransfer(transferId, `Peer connection ${peer.connectionState}`);
+                if (peer.connectionState === 'failed') {
+                    this.failTransfer(transferId, `Peer connection failed`);
+                } else if (peer.connectionState === 'connected') {
+                    this.log('Peer connected successfully');
                 }
             };
 
             peer.ondatachannel = (event) => {
                 transfer.channel = event.channel;
+                this.log('Data channel received');
+
+                // Clear timeout when channel opens
+                transfer.channel.onopen = () => {
+                    this.log('Data channel opened');
+                    if (transfer.connectionTimeout) {
+                        clearTimeout(transfer.connectionTimeout);
+                        transfer.connectionTimeout = null;
+                    }
+                };
+
                 transfer.channel.onmessage = (msg) => this.handleChannelMessage(transferId, msg.data);
                 transfer.channel.onerror = () => this.failTransfer(transferId, 'Data channel error');
                 transfer.channel.onclose = () => {
@@ -204,6 +247,13 @@ class ShopReceiver {
             }
 
             transfer.completed = true;
+
+            // Clear timeout on successful completion
+            if (transfer.connectionTimeout) {
+                clearTimeout(transfer.connectionTimeout);
+                transfer.connectionTimeout = null;
+            }
+
             this.log('Transfer completed:', { transferId, filePath, bytesReceived: transfer.bytesReceived });
 
             if (transfer.channel && transfer.channel.readyState === 'open') {
@@ -261,6 +311,13 @@ class ShopReceiver {
             this.cleanupTransfer(transferId);
             return;
         }
+
+        // Clear timeout
+        if (transfer.connectionTimeout) {
+            clearTimeout(transfer.connectionTimeout);
+            transfer.connectionTimeout = null;
+        }
+
         if (transfer && transfer.channel && transfer.channel.readyState === 'open') {
             try {
                 transfer.channel.send(JSON.stringify({ type: 'TRANSFER_ERROR', reason }));
@@ -276,6 +333,12 @@ class ShopReceiver {
         if (transfer.cleanedUp) return;
         transfer.cleanedUp = true;
 
+        // Clear timeout
+        if (transfer.connectionTimeout) {
+            clearTimeout(transfer.connectionTimeout);
+            transfer.connectionTimeout = null;
+        }
+
         const finish = () => {
             this.transfers.delete(transferId);
         };
@@ -286,6 +349,7 @@ class ShopReceiver {
                     transfer.channel.onmessage = null;
                     transfer.channel.onerror = null;
                     transfer.channel.onclose = null;
+                    transfer.channel.onopen = null;
                     if (!transfer.completed && transfer.channel.readyState !== 'closed') {
                         transfer.channel.close();
                     }
@@ -299,6 +363,8 @@ class ShopReceiver {
                     transfer.peer.onicecandidate = null;
                     transfer.peer.onconnectionstatechange = null;
                     transfer.peer.ondatachannel = null;
+                    transfer.peer.onicegatheringstatechange = null;
+                    transfer.peer.oniceconnectionstatechange = null;
                     if (!transfer.completed && transfer.peer.signalingState !== 'closed') {
                         transfer.peer.close();
                     }
