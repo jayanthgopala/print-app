@@ -498,6 +498,10 @@ async function showQR() {
     }
 }
 
+function closeQR() {
+    document.getElementById('qrSection').style.display = 'none';
+}
+
 async function printQR() {
     const shopId = document.getElementById('shopId').value;
     if (!shopId) {
@@ -592,7 +596,7 @@ function renderOrders() {
                 ${customerOrders.map(order => `
                     <div class="order-item" style="margin-left:20px;">
                         <div class="order-header">
-                            <div>
+                            <div class="order-details">
                                 <div><strong>File:</strong> ${escapeHtml(order.fileName)}</div>
                                 ${order.colorPages ? `<div style="font-size:13px;"><strong>Color Pages:</strong> ${escapeHtml(order.colorPages)} (@ ₹${colorPrice}/page)</div>` : ''}
                                 ${order.bwPages ? `<div style="font-size:13px;"><strong>B&W Pages:</strong> ${escapeHtml(order.bwPages)} (@ ₹${bwPrice}/page)</div>` : ''}
@@ -656,17 +660,23 @@ async function printFileFromButton(button) {
         <div><strong>File:</strong> ${escapeHtml(order.fileName)}</div>
         <div style="margin-top: 15px;">
             <label style="display: block; margin-bottom: 5px; font-weight: 600;">Color Pages:</label>
-            <input type="text" id="editColorPages" value="${escapeHtml(order.colorPages || '')}" 
-                   placeholder="e.g., 1-5,8,10" 
+            <input type="text" id="editColorPages" value="${escapeHtml(order.colorPages || '')}"
+                   placeholder="e.g., 1-5,8,10 or 'All Pages'"
                    style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
-            <div style="margin-top: 5px; color: #666; font-size: 12px;">Printer: ${colorPrinter || 'Not set'}</div>
+            <div style="margin-top: 5px; color: #666; font-size: 12px;">
+                Printer: ${colorPrinter || 'Not set'}<br>
+                Tip: Type "All Pages" to print entire document in color
+            </div>
         </div>
         <div style="margin-top: 15px;">
             <label style="display: block; margin-bottom: 5px; font-weight: 600;">B&W Pages:</label>
-            <input type="text" id="editBWPages" value="${escapeHtml(order.bwPages || '')}" 
-                   placeholder="e.g., 6-7,9" 
+            <input type="text" id="editBWPages" value="${escapeHtml(order.bwPages || '')}"
+                   placeholder="e.g., 6-7,9 or 'All Pages'"
                    style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
-            <div style="margin-top: 5px; color: #666; font-size: 12px;">Printer: ${bwPrinter || 'Not set'}</div>
+            <div style="margin-top: 5px; color: #666; font-size: 12px;">
+                Printer: ${bwPrinter || 'Not set'}<br>
+                Tip: Type "All Pages" to print entire document in B&W
+            </div>
         </div>
         <div style="margin-top: 15px;">
             <label style="display: block; margin-bottom: 5px; font-weight: 600;">Paper Size:</label>
@@ -689,8 +699,7 @@ async function printFileFromButton(button) {
             <label style="display: block; margin-bottom: 5px; font-weight: 600;">Sides:</label>
             <select id="editDuplex" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
                 <option value="simplex" ${(order.duplex || 'simplex') === 'simplex' ? 'selected' : ''}>Single Side</option>
-                <option value="long-edge" ${order.duplex === 'long-edge' ? 'selected' : ''}>Double Side Long Edge</option>
-                <option value="short-edge" ${order.duplex === 'short-edge' ? 'selected' : ''}>Double Side Short Edge</option>
+                <option value="long-edge" ${order.duplex === 'long-edge' ? 'selected' : ''}>Both Sides</option>
             </select>
         </div>
         <div style="margin-top: 15px;">
@@ -709,10 +718,17 @@ async function confirmPrint() {
     if (!currentPrintJob) return;
 
     const { filePath, orderId, order } = currentPrintJob;
-    
+
     // Get edited page ranges
     const colorPages = document.getElementById('editColorPages').value.trim();
     const bwPages = document.getElementById('editBWPages').value.trim();
+
+    // Check if at least one is specified (either as page range or "All Pages")
+    if (!colorPages && !bwPages) {
+        alert('Please specify at least color pages or B&W pages (or use "All Pages")');
+        return;
+    }
+
     const normalizedColorPages = normalizePrintSelection(colorPages);
     const normalizedBWPages = normalizePrintSelection(bwPages);
     const paperSize = document.getElementById('editPaperSize').value;
@@ -720,11 +736,6 @@ async function confirmPrint() {
     const copies = Math.max(1, parseInt(document.getElementById('editCopies').value || '1', 10));
     const duplex = document.getElementById('editDuplex').value;
     const scale = document.getElementById('editScale').value;
-    
-    if (!normalizedColorPages && !normalizedBWPages) {
-        alert('Please specify at least color pages or B&W pages');
-        return;
-    }
 
     if (paperSize !== 'A4') {
         const proceed = confirm(`Warning: this job is set to ${paperSize}, not A4. Make sure ${paperSize} paper is loaded before printing. Continue?`);
@@ -732,12 +743,12 @@ async function confirmPrint() {
             return;
         }
     }
-    
+
     try {
         const results = [];
-        
+
         // Print color pages if specified
-        if (normalizedColorPages && colorPrinter) {
+        if (colorPages && colorPrinter) {
             const result = await window.electronAPI.printFile(filePath, {
                 printerName: colorPrinter,
                 isColor: true,
@@ -750,9 +761,9 @@ async function confirmPrint() {
             });
             results.push(`Color ${describePrintSelection(normalizedColorPages)}: ${result.success ? 'Sent to printer' : result.message}`);
         }
-        
+
         // Print B&W pages if specified
-        if (normalizedBWPages && bwPrinter) {
+        if (bwPages && bwPrinter) {
             const result = await window.electronAPI.printFile(filePath, {
                 printerName: bwPrinter,
                 isColor: false,
@@ -765,17 +776,27 @@ async function confirmPrint() {
             });
             results.push(`B&W ${describePrintSelection(normalizedBWPages)}: ${result.success ? 'Sent to printer' : result.message}`);
         }
-        
+
         // Show results
         if (results.length > 0) {
             alert('Print Job Queued!\n\n' + results.join('\n') + '\n\n⏳ Large print jobs may take a few minutes to process.\nYou can continue working while printing happens in the background.');
-            
+
             // Mark order as printed
             const order = orders.find(o => o.id === orderId);
             if (order) {
                 order.printed = true;
             }
-            
+
+            // Delete the file after successful print
+            try {
+                const deleteResult = await window.electronAPI.deleteFile(filePath);
+                if (!deleteResult.success) {
+                    console.error('Failed to delete file:', deleteResult.message);
+                }
+            } catch (error) {
+                console.error('Error deleting file:', error);
+            }
+
             renderOrders();
             closePrintModal();
         } else {
@@ -797,15 +818,15 @@ function normalizePrintSelection(value) {
     if (!normalized) return '';
 
     const lowered = normalized.toLowerCase();
-    if (lowered === 'all pages' || lowered === 'full image' || lowered === 'all') {
-        return 'ALL_PAGES';
+    if (lowered === 'all pages' || lowered === 'full image' || lowered === 'all' || lowered === 'all_pages') {
+        return '';
     }
 
     return normalized;
 }
 
 function describePrintSelection(value) {
-    if (value === 'ALL_PAGES') {
+    if (!value || value === '') {
         return 'pages (all)';
     }
 
@@ -815,6 +836,23 @@ function describePrintSelection(value) {
 function closePrintModal() {
     document.getElementById('printModal').style.display = 'none';
     currentPrintJob = null;
+}
+
+async function openNativePrintDialog() {
+    if (!currentPrintJob) return;
+
+    const { filePath } = currentPrintJob;
+
+    try {
+        const result = await window.electronAPI.openNativePrintDialog(filePath);
+        if (result.success) {
+            showMessage('Native printer dialog opened', 'success');
+        } else {
+            showMessage('Failed to open printer dialog: ' + result.message, 'error');
+        }
+    } catch (error) {
+        showMessage('Error opening printer dialog: ' + error.message, 'error');
+    }
 }
 
 function escapeHtml(text) {
@@ -856,7 +894,7 @@ renderOrders = function renderOrdersPatched() {
             ${customerOrders.map((order) => `
                 <div class="order-item" style="margin-left:20px;">
                     <div class="order-header">
-                        <div>
+                        <div class="order-details">
                             <div><strong>File:</strong> ${escapeHtml(order.fileName)}</div>
                             ${order.colorPages ? `<div style="font-size:13px;"><strong>Color Pages:</strong> ${escapeHtml(order.colorPages)} (@ Rs ${colorPrice}/page)</div>` : ''}
                             ${order.bwPages ? `<div style="font-size:13px;"><strong>B&W Pages:</strong> ${escapeHtml(order.bwPages)} (@ Rs ${bwPrice}/page)</div>` : ''}

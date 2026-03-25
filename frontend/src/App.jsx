@@ -518,8 +518,7 @@ export default function App() {
                                                     className="input-small"
                                                 >
                                                     <option value="simplex">Single Side</option>
-                                                    <option value="long-edge">Double Side Long Edge</option>
-                                                    <option value="short-edge">Double Side Short Edge</option>
+                                                    <option value="long-edge">Both Sides</option>
                                                 </select>
                                                 <label className="print-type-label">Scale</label>
                                                 <select

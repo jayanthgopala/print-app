@@ -491,8 +491,17 @@
             gap: 18px;
         }
 
+        .order-details {
+            flex: 1;
+            min-width: 0;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
         .print-btn {
             min-width: 140px;
+            max-width: 140px;
+            flex-shrink: 0;
             background: linear-gradient(135deg, #18a058, #0c7a3f);
             box-shadow: 0 12px 24px rgba(24, 160, 88, 0.16);
         }
@@ -644,7 +653,7 @@
                 align-items: flex-start;
             }
 
-            button,
+            button:not(.print-btn),
             .mini-stat {
                 width: 100%;
             }
@@ -668,14 +677,6 @@
                     Receive customer files, route jobs to the correct printer, and keep your desktop print counter organized from one screen.
                 </div>
                 <div class="hero-metrics">
-                    <div class="metric-card">
-                        <span>Transfer Mode</span>
-                        <strong>Direct WebRTC</strong>
-                    </div>
-                    <div class="metric-card">
-                        <span>Queue View</span>
-                        <strong>Customer First</strong>
-                    </div>
                     <div class="metric-card">
                         <span>Output</span>
                         <strong>Color + B/W</strong>
@@ -721,7 +722,13 @@
                             <input type="password" id="shopPassword" placeholder="Enter shop password">
                             <div class="hint">Required before the PC app can go online.</div>
                         </div>
+                    </div>
 
+                    <div class="cta-row" style="margin-top: 20px;">
+                        <button type="button" class="wide" onclick="saveAndStart()">Save and Start Service</button>
+                    </div>
+
+                    <div class="section-grid" style="margin-top: 20px;">
                         <div class="field-card full">
                             <label for="downloadPath">Download Folder</label>
                             <input type="text" id="downloadPath" readonly>
@@ -762,7 +769,6 @@
                     <div class="cta-row">
                         <button type="button" class="btn-secondary" onclick="loadPrinters()">Refresh Printers</button>
                         <button type="button" class="btn-accent" onclick="showQR()">Show QR Code</button>
-                        <button type="button" class="wide" onclick="saveAndStart()">Save and Start Service</button>
                     </div>
                 </div>
             </div>
@@ -774,6 +780,7 @@
                             <h3>Customer QR</h3>
                             <p>Customers can scan this code to send files directly to this print desk.</p>
                         </div>
+                        <button type="button" onclick="closeQR()" style="background: var(--danger); color: white; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-weight: 600; font-size: 14px;">Close</button>
                     </div>
                     <div class="qr-wrap">
                         <div id="qrCode"></div>
@@ -806,6 +813,7 @@
             <h2>Print Job</h2>
             <div id="printDetails"></div>
             <div class="modal-buttons">
+                <button type="button" onclick="openNativePrintDialog()" class="btn-secondary">Open Printer Settings</button>
                 <button type="button" onclick="confirmPrint()" class="btn-print">Print Now</button>
                 <button type="button" onclick="closePrintModal()" class="btn-cancel">Cancel</button>
             </div>

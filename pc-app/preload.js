@@ -10,5 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveReceivedFile: (payload) => ipcRenderer.invoke('save-received-file', payload),
     getPrinters: () => ipcRenderer.invoke('get-printers'),
     printFile: (filePath, options) => ipcRenderer.invoke('print-file', filePath, options),
+    openNativePrintDialog: (filePath) => ipcRenderer.invoke('open-native-print-dialog', filePath),
+    deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),
     onFileReceived: (callback) => ipcRenderer.on('file-received', (event, data) => callback(data))
 });

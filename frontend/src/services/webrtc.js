@@ -3,7 +3,9 @@ const DEFAULT_ICE_SERVERS = [
 ];
 
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
-const CHUNK_SIZE = 64 * 1024;
+const CHUNK_SIZE = 256 * 1024; // Increased from 64KB to 256KB for faster transfer
+const MAX_BUFFERED_AMOUNT = CHUNK_SIZE * 8; // Buffer up to 2MB before pausing
+const MIN_BUFFERED_AMOUNT = CHUNK_SIZE * 2; // Resume when buffer drops to 512KB
 const ALLOWED_TYPES = new Set([
     'application/pdf',
     'application/msword',
@@ -216,28 +218,39 @@ export class FileTransferClient {
         channel.send(JSON.stringify({ type: 'FILE_METADATA', metadata }));
 
         let offset = 0;
-        while (offset < file.size) {
+        const totalSize = file.size;
+        const startTime = Date.now();
+
+        while (offset < totalSize) {
+            // Wait if buffer is too full
+            while (channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+
             const slice = file.slice(offset, offset + CHUNK_SIZE);
             const buffer = await slice.arrayBuffer();
-            channel.send(buffer);
-            offset += buffer.byteLength;
-            this.onProgress((offset / file.size) * 100);
 
-            if (channel.bufferedAmount > CHUNK_SIZE * 16) {
-                await new Promise((resolve) => {
-                    const check = () => {
-                        if (channel.bufferedAmount <= CHUNK_SIZE * 2) {
-                            resolve();
-                        } else {
-                            setTimeout(check, 20);
-                        }
-                    };
-                    check();
-                });
+            try {
+                channel.send(buffer);
+                offset += buffer.byteLength;
+
+                // Update progress
+                const progress = (offset / totalSize) * 100;
+                this.onProgress(progress);
+
+                // Log transfer speed every 5MB
+                if (offset % (5 * 1024 * 1024) < CHUNK_SIZE) {
+                    const elapsedSec = (Date.now() - startTime) / 1000;
+                    const speedMBps = (offset / (1024 * 1024)) / elapsedSec;
+                    console.log(`Transfer: ${Math.round(progress)}%, Speed: ${speedMBps.toFixed(2)} MB/s`);
+                }
+            } catch (error) {
+                throw new Error(`Failed to send chunk at offset ${offset}: ${error.message}`);
             }
         }
 
         channel.send(JSON.stringify({ type: 'FILE_COMPLETE' }));
+        console.log(`Transfer complete: ${(totalSize / (1024 * 1024)).toFixed(2)} MB in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
     }
 
     validateFile(file) {

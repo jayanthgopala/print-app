@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -100,6 +100,9 @@ function createWindow() {
             contextIsolation: true
         }
     });
+
+    // Remove the menu bar
+    Menu.setApplicationMenu(null);
 
     mainWindow.loadFile('index.html');
     mainWindow.on('closed', () => {
@@ -506,6 +509,64 @@ ipcMain.handle('print-file', async (event, filePath, options) => {
         });
     } catch (error) {
         console.error('Print error:', error);
+        return { success: false, message: error.message };
+    }
+});
+
+ipcMain.handle('open-native-print-dialog', async (event, filePath) => {
+    try {
+        const normalizedPath = path.normalize(filePath);
+
+        if (!fs.existsSync(normalizedPath)) {
+            return { success: false, message: 'File not found' };
+        }
+
+        // Create a hidden window to load the file and show print dialog
+        const printWindow = new BrowserWindow({
+            show: false,
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true
+            }
+        });
+
+        // Load the file
+        await printWindow.loadURL(`file://${normalizedPath}`);
+
+        // Show the native system print dialog
+        printWindow.webContents.print({
+            silent: false,  // Show the print dialog
+            printBackground: true,
+            color: true
+        }, (success, errorType) => {
+            printWindow.close();
+            if (!success && errorType) {
+                log('Print dialog error:', errorType);
+            }
+        });
+
+        return { success: true, message: 'Print dialog opened' };
+    } catch (error) {
+        console.error('Error opening native print dialog:', error);
+        return { success: false, message: error.message };
+    }
+});
+
+ipcMain.handle('delete-file', async (event, filePath) => {
+    try {
+        const normalizedPath = path.normalize(filePath);
+
+        if (!fs.existsSync(normalizedPath)) {
+            return { success: true, message: 'File does not exist' };
+        }
+
+        // Delete the file
+        fs.unlinkSync(normalizedPath);
+        log(`Deleted file after print: ${normalizedPath}`);
+
+        return { success: true, message: 'File deleted successfully' };
+    } catch (error) {
+        log('Error deleting file:', formatError(error));
         return { success: false, message: error.message };
     }
 });
