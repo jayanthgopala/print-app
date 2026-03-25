@@ -60,6 +60,34 @@ function loadLocalEnv(envPath) {
     }
 }
 
+function getIceServersFromEnv() {
+    const defaultStunUrls = [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302'
+    ];
+    const configuredStunUrls = String(process.env.STUN_URLS || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+    const stunUrls = configuredStunUrls.length > 0 ? configuredStunUrls : defaultStunUrls;
+    const iceServers = stunUrls.map((urls) => ({ urls }));
+
+    const turnUrl = String(process.env.TURN_URL || '').trim();
+    const turnUsername = String(process.env.TURN_USERNAME || '').trim();
+    const turnCredential = String(process.env.TURN_CREDENTIAL || '').trim();
+
+    if (turnUrl) {
+        iceServers.push({
+            urls: turnUrl,
+            username: turnUsername,
+            credential: turnCredential
+        });
+    }
+
+    return iceServers;
+}
+
 function getLogPath() {
     try {
         return path.join(app.getPath('userData'), 'pc-app.log');
@@ -296,7 +324,8 @@ ipcMain.handle('start-service', () => {
             shopId,
             token,
             downloadPath,
-            wsUrl: WS_URL
+            wsUrl: WS_URL,
+            iceServers: getIceServersFromEnv()
         }
     };
 });

@@ -114,7 +114,7 @@ export default function App() {
                 setErrorMessage('Shop is offline or not connected right now.');
             } else if (nextStatus === 'ERROR') {
                 setInfoMessage('');
-                setErrorMessage('Connection or transfer failed. Check the shop status and try again.');
+                setErrorMessage('Connection or transfer failed. On mobile data or weak networks, a TURN relay may be required.');
             } else if (nextStatus === 'TRANSFERRING') {
                 setInfoMessage('Transfer in progress...');
             } else if (nextStatus === 'COMPLETED') {

@@ -1,8 +1,4 @@
-const DEFAULT_ICE_SERVERS = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' }
-];
+import { ICE_SERVERS } from '../config';
 
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 const CHUNK_SIZE = 64 * 1024;
@@ -95,7 +91,7 @@ export class FileTransferClient {
 
         const transferId = crypto.randomUUID();
         const peer = new RTCPeerConnection({
-            iceServers: DEFAULT_ICE_SERVERS,
+            iceServers: ICE_SERVERS,
             iceCandidatePoolSize: 10
         });
         const channel = peer.createDataChannel('printshop-transfer', {
@@ -171,7 +167,7 @@ export class FileTransferClient {
                 console.log(`ICE connection state: ${peer.iceConnectionState}`);
                 // Only fail if truly failed, not just disconnected (which can recover)
                 if (peer.iceConnectionState === 'failed' && !transfer.acknowledged) {
-                    transfer.rejectOnce(new Error('Connection failed. Please check your internet and try again.'));
+                    transfer.rejectOnce(new Error('Direct connection failed. If you are on mobile data or a restricted network, TURN server support is required.'));
                 } else if (peer.iceConnectionState === 'disconnected') {
                     this.scheduleDisconnectFailure(transferId, transfer, 'Connection was interrupted for too long. Please retry the transfer.');
                 } else if (['connected', 'completed'].includes(peer.iceConnectionState) && transfer.disconnectTimeout) {
@@ -183,7 +179,7 @@ export class FileTransferClient {
             peer.onconnectionstatechange = () => {
                 console.log(`Peer connection state: ${peer.connectionState}`);
                 if (peer.connectionState === 'failed' && !transfer.acknowledged) {
-                    transfer.rejectOnce(new Error('Connection failed. Please retry the transfer.'));
+                    transfer.rejectOnce(new Error('Direct connection failed. If you are on mobile data or a restricted network, TURN server support is required.'));
                 } else if (peer.connectionState === 'disconnected') {
                     this.scheduleDisconnectFailure(transferId, transfer, 'Connection was interrupted for too long. Please retry the transfer.');
                 } else if (['connected', 'completed'].includes(peer.connectionState)) {

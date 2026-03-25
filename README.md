@@ -377,6 +377,20 @@ WebRTC in production requires secure origins. Use:
 
 The app currently uses Google's public STUN server. This is enough for some networks, but not all. For production use across stricter NAT or firewall conditions, add a TURN server such as Coturn.
 
+Frontend relay configuration:
+
+- `VITE_STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302`
+- `VITE_TURN_URL=turn:your-turn-host:3478`
+- `VITE_TURN_USERNAME=your-username`
+- `VITE_TURN_CREDENTIAL=your-password`
+
+PC app relay configuration:
+
+- `STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302`
+- `TURN_URL=turn:your-turn-host:3478`
+- `TURN_USERNAME=your-username`
+- `TURN_CREDENTIAL=your-password`
+
 ### Electron / `wrtc`
 
 If the PC app fails because of native module issues, rebuild Electron dependencies:

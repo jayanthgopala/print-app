@@ -16,10 +16,11 @@ const CONNECTION_TIMEOUT_MS = 120000;
 const DISCONNECT_GRACE_PERIOD_MS = 15000;
 
 class ShopReceiverClient {
-    constructor({ shopId, token, wsUrl, onStatusChange, onFileReceived, onLog }) {
+    constructor({ shopId, token, wsUrl, iceServers, onStatusChange, onFileReceived, onLog }) {
         this.shopId = shopId;
         this.token = token;
         this.wsUrl = wsUrl;
+        this.iceServers = Array.isArray(iceServers) && iceServers.length > 0 ? iceServers : DEFAULT_ICE_SERVERS;
         this.onStatusChange = onStatusChange;
         this.onFileReceived = onFileReceived;
         this.onLog = onLog || (() => {});
@@ -132,7 +133,7 @@ class ShopReceiverClient {
         this.validateMetadata(metadata);
 
         const peer = new RTCPeerConnection({
-            iceServers: DEFAULT_ICE_SERVERS,
+            iceServers: this.iceServers,
             iceCandidatePoolSize: 10
         });
         const transfer = {
