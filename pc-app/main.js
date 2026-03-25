@@ -88,6 +88,32 @@ function getIceServersFromEnv() {
     return iceServers;
 }
 
+async function fetchTurnIceServers(apiUrl, shopId) {
+    if (!apiUrl || !shopId) {
+        return [];
+    }
+
+    try {
+        const response = await fetch(`${apiUrl.replace(/\/$/, '')}/turn/ice-servers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shopId, ttl: 3600 })
+        });
+
+        if (!response.ok) {
+            const message = await response.text();
+            log('TURN credential fetch failed:', response.status, message);
+            return [];
+        }
+
+        const payload = await response.json();
+        return Array.isArray(payload?.iceServers) ? payload.iceServers : [];
+    } catch (error) {
+        log('TURN credential fetch error:', formatError(error));
+        return [];
+    }
+}
+
 function getLogPath() {
     try {
         return path.join(app.getPath('userData'), 'pc-app.log');
@@ -309,7 +335,7 @@ ipcMain.handle('generate-qr', async (event, shopId) => {
     }
 });
 
-ipcMain.handle('start-service', () => {
+ipcMain.handle('start-service', async () => {
     const shopId = store.get('shopId');
     const token = store.get('token');
     const downloadPath = store.get('downloadPath', app.getPath('downloads'));
@@ -318,6 +344,8 @@ ipcMain.handle('start-service', () => {
         return { success: false, message: 'Missing credentials' };
     }
 
+    const dynamicIceServers = await fetchTurnIceServers(API_URL, shopId);
+
     return {
         success: true,
         config: {
@@ -325,7 +353,7 @@ ipcMain.handle('start-service', () => {
             token,
             downloadPath,
             wsUrl: WS_URL,
-            iceServers: getIceServersFromEnv()
+            iceServers: dynamicIceServers.length > 0 ? dynamicIceServers : getIceServersFromEnv()
         }
     };
 });

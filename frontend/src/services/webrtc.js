@@ -21,6 +21,7 @@ export class FileTransferClient {
         this.onStatusChange = onStatusChange;
         this.onProgress = onProgress;
         this.iceServers = Array.isArray(iceServers) && iceServers.length > 0 ? iceServers : ICE_SERVERS;
+        this.iceServersLoaded = Promise.resolve(this.iceServers);
         this.ws = null;
         this.clientId = crypto.randomUUID();
         this.pendingTransfers = new Map();
@@ -29,7 +30,19 @@ export class FileTransferClient {
     setIceServers(iceServers) {
         if (Array.isArray(iceServers) && iceServers.length > 0) {
             this.iceServers = iceServers;
+            this.iceServersLoaded = Promise.resolve(this.iceServers);
         }
+    }
+
+    setIceServersPromise(iceServersPromise) {
+        this.iceServersLoaded = Promise.resolve(iceServersPromise)
+            .then((iceServers) => {
+                if (Array.isArray(iceServers) && iceServers.length > 0) {
+                    this.iceServers = iceServers;
+                }
+                return this.iceServers;
+            })
+            .catch(() => this.iceServers);
     }
 
     clearTransferTimers(transfer) {
@@ -95,6 +108,7 @@ export class FileTransferClient {
             throw new Error('Signaling server is not connected');
         }
         this.validateFile(file);
+        await this.iceServersLoaded;
 
         const transferId = crypto.randomUUID();
         const peer = new RTCPeerConnection({
