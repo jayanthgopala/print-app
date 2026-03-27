@@ -1,4 +1,3 @@
-const MAX_TRANSFER_SIZE_BYTES = 100 * 1024 * 1024;
 const subscriptionCache = new Map();
 let schemaReadyPromise;
 
@@ -35,11 +34,6 @@ export default {
     async fetch(request, env) {
         try {
             const url = new URL(request.url);
-
-            if (isWebSocketUpgrade(request)) {
-                const id = env.SIGNALING_ROOM.idFromName('global');
-                return env.SIGNALING_ROOM.get(id).fetch(request);
-            }
 
             if (request.method === 'OPTIONS') {
                 return new Response(null, {
@@ -79,6 +73,10 @@ export default {
 
             if (request.method === 'POST' && url.pathname === '/auth/client-token') {
                 return handleClientToken(request, env);
+            }
+
+            if (request.method === 'POST' && url.pathname === '/auth/verify-client-token') {
+                return handleVerifyClientToken(request, env);
             }
 
             if (request.method === 'POST' && url.pathname === '/auth/shop-token') {
@@ -127,10 +125,6 @@ export default {
                 return handlePcStatus(request, env);
             }
 
-            if (request.method === 'POST' && url.pathname === '/turn/ice-servers') {
-                return handleTurnIceServers(request, env);
-            }
-
             if (request.method === 'POST' && url.pathname === '/share') {
                 const shopId = url.searchParams.get('shop') || '';
                 return redirect(`/?shop=${encodeURIComponent(shopId)}&shared=true`, request, env);
@@ -143,306 +137,6 @@ export default {
         }
     }
 };
-
-export class SignalingRoom {
-    constructor(state, env) {
-        this.state = state;
-        this.env = env;
-        this.onlineShops = new Map();
-        this.connectedClients = new Map();
-        this.transferSessions = new Map();
-        this.socketMeta = new Map();
-    }
-
-    async fetch(request) {
-        if (!isWebSocketUpgrade(request)) {
-            return new Response('Expected WebSocket upgrade', { status: 426 });
-        }
-
-        const pair = new WebSocketPair();
-        const [client, server] = Object.values(pair);
-        server.accept();
-        this.socketMeta.set(server, { isRegistered: false, shopCode: null, clientId: null });
-
-        server.addEventListener('message', (event) => {
-            this.handleMessage(server, event.data).catch((error) => {
-                console.error('DO WebSocket message error:', error);
-                this.safeSend(server, { type: 'TRANSFER_ERROR', reason: 'internal_error' });
-            });
-        });
-
-        server.addEventListener('close', () => this.cleanupSocket(server));
-        server.addEventListener('error', () => this.cleanupSocket(server));
-
-        return new Response(null, { status: 101, webSocket: client });
-    }
-
-    async handleMessage(ws, rawMessage) {
-        let data;
-        try {
-            data = JSON.parse(rawMessage);
-        } catch {
-            this.safeSend(ws, { type: 'TRANSFER_ERROR', reason: 'invalid_json' });
-            return;
-        }
-
-        if (data.type === 'REGISTER_SHOP') {
-            if (!data.token) {
-                this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'missing_token' });
-                ws.close(1008, 'missing_token');
-                return;
-            }
-
-            let decoded;
-            try {
-                decoded = await verifyJwt(data.token, this.env.JWT_SECRET);
-            } catch {
-                this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'invalid_token' });
-                ws.close(1008, 'invalid_token');
-                return;
-            }
-
-            const shopCode = normalizeShopCode(decoded.shopCode || decoded.shop_code || decoded.shop || decoded.code);
-            if (!shopCode) {
-                this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'invalid_payload' });
-                ws.close(1008, 'invalid_payload');
-                return;
-            }
-
-            try {
-                const shop = await dbGetShopByCode(this.env, shopCode);
-                const subEnd = shop?.subscription_end;
-                if (subEnd && new Date(subEnd).getTime() <= Date.now()) {
-                    this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'subscription_expired' });
-                    ws.close(1008, 'subscription_expired');
-                    return;
-                }
-            } catch (error) {
-                console.error('WS register subscription check error:', error);
-                this.safeSend(ws, { type: 'REGISTER_FAILED', reason: 'internal_error' });
-                ws.close(1011, 'internal_error');
-                return;
-            }
-
-            const meta = this.socketMeta.get(ws) || {};
-            meta.isRegistered = true;
-            meta.shopCode = shopCode;
-            this.socketMeta.set(ws, meta);
-            this.onlineShops.set(shopCode, ws);
-            this.safeSend(ws, { type: 'REGISTER_SUCCESS' });
-            return;
-        }
-
-        if (data.type === 'CHECK_STATUS') {
-            const shopWs = this.onlineShops.get(normalizeShopCode(data.shopId));
-            const meta = this.socketMeta.get(ws) || {};
-            meta.clientId = data.senderId || meta.clientId || crypto.randomUUID();
-            this.socketMeta.set(ws, meta);
-            this.connectedClients.set(meta.clientId, ws);
-            this.safeSend(ws, { type: 'STATUS_RESPONSE', status: shopWs ? 'ONLINE' : 'OFFLINE' });
-            return;
-        }
-
-        if (data.type === 'TRANSFER_INIT') {
-            const shopWs = this.onlineShops.get(data.shopId);
-            const transferSize = Number(data?.metadata?.fileSize || 0);
-
-            if (!data.transferId || !data.senderId) {
-                this.safeSend(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId || null, reason: 'invalid_transfer' });
-                return;
-            }
-            if (!Number.isFinite(transferSize) || transferSize <= 0 || transferSize > MAX_TRANSFER_SIZE_BYTES) {
-                this.safeSend(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'invalid_file_size' });
-                return;
-            }
-            if (!shopWs) {
-                this.safeSend(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'shop_offline' });
-                return;
-            }
-
-            this.connectedClients.set(data.senderId, ws);
-            const meta = this.socketMeta.get(ws) || {};
-            meta.clientId = data.senderId;
-            this.socketMeta.set(ws, meta);
-            this.registerTransferSession(data.transferId, data.shopId, data.senderId, ws);
-
-            this.safeSend(shopWs, {
-                type: 'TRANSFER_INIT',
-                transferId: data.transferId,
-                clientId: data.senderId,
-                metadata: data.metadata
-            });
-            return;
-        }
-
-        if (data.type === 'WEBRTC_OFFER') {
-            const shopWs = this.onlineShops.get(data.shopId);
-            if (!shopWs) {
-                this.safeSend(ws, { type: 'TRANSFER_ERROR', transferId: data.transferId, reason: 'shop_offline' });
-                this.transferSessions.delete(data.transferId);
-                return;
-            }
-
-            this.connectedClients.set(data.senderId, ws);
-            const meta = this.socketMeta.get(ws) || {};
-            meta.clientId = data.senderId;
-            this.socketMeta.set(ws, meta);
-            this.registerTransferSession(data.transferId, data.shopId, data.senderId, ws);
-
-            this.safeSend(shopWs, {
-                type: 'WEBRTC_OFFER',
-                transferId: data.transferId,
-                clientId: data.senderId,
-                offer: data.offer,
-                metadata: data.metadata
-            });
-            return;
-        }
-
-        if (data.type === 'WEBRTC_ANSWER') {
-            const session = this.transferSessions.get(data.transferId);
-            if (!session) return;
-            this.safeSend(session.clientWs, {
-                type: 'WEBRTC_ANSWER',
-                transferId: data.transferId,
-                answer: data.answer
-            });
-            return;
-        }
-
-        if (data.type === 'ICE_CANDIDATE') {
-            const session = this.transferSessions.get(data.transferId);
-            if (!session) return;
-
-            const meta = this.socketMeta.get(ws) || {};
-            if (meta.shopCode) {
-                this.safeSend(session.clientWs, {
-                    type: 'ICE_CANDIDATE',
-                    transferId: data.transferId,
-                    candidate: data.candidate
-                });
-            } else {
-                const shopWs = this.onlineShops.get(session.shopCode);
-                if (shopWs) {
-                    this.safeSend(shopWs, {
-                        type: 'ICE_CANDIDATE',
-                        transferId: data.transferId,
-                        clientId: session.clientId,
-                        candidate: data.candidate
-                    });
-                }
-            }
-            return;
-        }
-
-        if (data.type === 'TRANSFER_STATE') {
-            const session = this.transferSessions.get(data.transferId);
-            if (!session) return;
-            this.safeSend(session.clientWs, {
-                type: 'TRANSFER_STATE',
-                transferId: data.transferId,
-                state: data.state,
-                details: data.details || null
-            });
-            if (data.state === 'COMPLETED' || data.state === 'FAILED') {
-                this.transferSessions.delete(data.transferId);
-            }
-            return;
-        }
-
-        if (data.type === 'SEND_FILE') {
-            const meta = this.socketMeta.get(ws) || {};
-            const shopCode = normalizeShopCode(data.shopId || data.shopCode);
-            const shopWs = this.onlineShops.get(shopCode);
-            if (!shopWs) {
-                this.safeSend(ws, {
-                    type: 'TRANSFER_ERROR',
-                    transferId: data.transferId || null,
-                    reason: 'shop_offline'
-                });
-                return;
-            }
-
-            const senderId = data.senderId || data.clientId || meta.clientId;
-            if (senderId) {
-                this.connectedClients.set(senderId, ws);
-                meta.clientId = senderId;
-                this.socketMeta.set(ws, meta);
-            }
-
-            this.safeSend(shopWs, {
-                type: 'SEND_FILE',
-                transferId: data.transferId || null,
-                clientId: senderId || null,
-                chunkIndex: data.chunkIndex,
-                totalChunks: data.totalChunks,
-                isLastChunk: data.isLastChunk,
-                metadata: data.metadata || null,
-                fileData: data.fileData
-            });
-            return;
-        }
-
-        if (data.type === 'CHUNK_ACK') {
-            const clientSession = this.connectedClients.get(data.clientId);
-            if (clientSession) {
-                this.safeSend(clientSession, {
-                    type: 'CHUNK_ACK',
-                    transferId: data.transferId || null,
-                    chunkIndex: data.chunkIndex
-                });
-            }
-            return;
-        }
-
-        if (data.type === 'FILE_ACK') {
-            const clientSession = this.connectedClients.get(data.clientId);
-            if (clientSession) {
-                this.safeSend(clientSession, {
-                    type: 'FILE_ACK',
-                    transferId: data.transferId || null,
-                    success: data.success !== false
-                });
-            }
-            return;
-        }
-    }
-
-    registerTransferSession(transferId, shopCode, clientId, clientWs) {
-        this.transferSessions.set(transferId, {
-            shopCode,
-            clientId,
-            clientWs,
-            createdAt: Date.now()
-        });
-    }
-
-    cleanupSocket(ws) {
-        const meta = this.socketMeta.get(ws);
-        if (meta?.shopCode) {
-            this.onlineShops.delete(meta.shopCode);
-        }
-        if (meta?.clientId) {
-            this.connectedClients.delete(meta.clientId);
-        }
-
-        for (const [transferId, session] of this.transferSessions.entries()) {
-            if (session.clientWs === ws || session.shopCode === meta?.shopCode) {
-                this.transferSessions.delete(transferId);
-            }
-        }
-
-        this.socketMeta.delete(ws);
-    }
-
-    safeSend(ws, payload) {
-        try {
-            ws.send(JSON.stringify(payload));
-        } catch (error) {
-            console.error('safeSend failed:', error);
-        }
-    }
-}
 
 async function handlePublicShopLookup(shopCode, request, env) {
     if (!shopCode) return json({ error: 'shopCode required' }, 400, request, env);
@@ -460,6 +154,8 @@ async function handlePublicShopLookup(shopCode, request, env) {
             shop: {
                 code: shop.shop_code,
                 name: shop.shop_name || shop.name || shop.shop_code,
+                pcEndpoint: shop.pc_status === 'online' ? (shop.pc_endpoint || null) : null,
+                status: shop.pc_status || 'offline',
                 colorPrice: shop.color_price ?? null,
                 bwPrice: shop.bw_price ?? null
             }
@@ -580,6 +276,44 @@ async function handleClientToken(request, env) {
 
 async function handleShopToken(request, env) {
     return handleShopLogin(request, env, { tokenType: 'SHOP', expiresInSeconds: 30 * 24 * 60 * 60 });
+}
+
+async function handleVerifyClientToken(request, env) {
+    const auth = getBearerToken(request);
+    if (!auth) return json({ error: 'Unauthorized' }, 401, request, env);
+
+    let decoded;
+    try {
+        decoded = await verifyJwt(auth, env.JWT_SECRET);
+    } catch {
+        return json({ error: 'Invalid token' }, 401, request, env);
+    }
+
+    if (!decoded || decoded.type !== 'CLIENT' || !decoded.shopCode) {
+        return json({ error: 'Client token required' }, 403, request, env);
+    }
+
+    try {
+        const shop = await dbGetShopByCode(env, normalizeShopCode(decoded.shopCode));
+        if (!shop) {
+            return json({ error: 'Shop not found' }, 404, request, env);
+        }
+
+        const subEnd = shop.subscription_end;
+        if (subEnd && Date.now() > new Date(subEnd).getTime()) {
+            return json({ error: 'Subscription expired' }, 403, request, env);
+        }
+
+        return json({
+            ok: true,
+            clientId: decoded.clientId || null,
+            shopCode: shop.shop_code,
+            shopId: shop.id
+        }, 200, request, env);
+    } catch (error) {
+        console.error('Verify client token error:', error);
+        return json({ error: 'Internal server error' }, 500, request, env);
+    }
 }
 
 async function handleUpdatePrices(request, env) {
@@ -908,55 +642,6 @@ async function handlePcStatus(request, env) {
     }
 }
 
-async function handleTurnIceServers(request, env) {
-    if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
-        return json({ error: 'TURN is not configured on the server' }, 503, request, env);
-    }
-
-    let body = {};
-    try {
-        body = await request.json();
-    } catch {}
-
-    const shopCode = normalizeShopCode(body.shopId || body.shopCode);
-    if (!shopCode) {
-        return json({ error: 'shopId is required' }, 400, request, env);
-    }
-
-    const shop = await dbGetShopByCode(env, shopCode);
-    if (!shop) {
-        return json({ error: 'Shop not found' }, 404, request, env);
-    }
-
-    const ttl = Math.max(300, Math.min(Number(body.ttl || 3600), 172800));
-    const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ ttl })
-    });
-
-    if (!response.ok) {
-        const errorText = await response.text();
-        console.error('TURN credential generation failed:', response.status, errorText);
-        return json({ error: 'Failed to generate TURN credentials' }, 502, request, env);
-    }
-
-    const payload = await response.json();
-    const iceServers = Array.isArray(payload.iceServers)
-        ? payload.iceServers.map((server) => ({
-            ...server,
-            urls: Array.isArray(server.urls)
-                ? server.urls.filter((url) => !String(url).includes(':53'))
-                : server.urls
-        })).filter((server) => Array.isArray(server.urls) ? server.urls.length > 0 : Boolean(server.urls))
-        : [];
-
-    return json({ iceServers, ttl }, 200, request, env);
-}
-
 async function requireAdmin(request, env) {
     const auth = getBearerToken(request);
     if (!auth) {
@@ -1066,10 +751,6 @@ function matchPath(pathname, pattern) {
 function getBearerToken(request) {
     const auth = request.headers.get('authorization') || '';
     return auth.replace(/^Bearer\s+/i, '') || '';
-}
-
-function isWebSocketUpgrade(request) {
-    return (request.headers.get('Upgrade') || '').toLowerCase() === 'websocket';
 }
 
 function json(payload, status, request, env) {

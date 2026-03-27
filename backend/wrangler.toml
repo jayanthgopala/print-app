@@ -2,16 +2,7 @@ name = "print-app-backend"
 main = "server.js"
 compatibility_date = "2026-03-11"
 
-[durable_objects]
-bindings = [
-  { name = "SIGNALING_ROOM", class_name = "SignalingRoom" }
-]
-
 [[d1_databases]]
 binding = "DB"
 database_name = "print_app"
 database_id = "1bb32ee3-c86a-41a3-8e27-2e3307f9e3d6"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["SignalingRoom"]

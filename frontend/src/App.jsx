@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FileTransferClient } from './services/webrtc';
-import { API_URL, WS_URL } from './config';
+import { API_URL } from './config';
 import './App.css';
 
 const DEFAULT_PRINT_SETTINGS = {
@@ -31,22 +30,6 @@ export default function App() {
     const [infoMessage, setInfoMessage] = useState('');
     const [isConnecting, setIsConnecting] = useState(false);
     const [isSending, setIsSending] = useState(false);
-
-    const fetchTurnIceServers = async (normalizedShopId) => {
-        const response = await fetch(`${API_URL}/turn/ice-servers`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ shopId: normalizedShopId, ttl: 3600 })
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || 'TURN credential request failed');
-        }
-
-        const data = await response.json();
-        return Array.isArray(data?.iceServers) ? data.iceServers : [];
-    };
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -105,11 +88,6 @@ export default function App() {
             return;
         }
 
-        if (!WS_URL) {
-            setErrorMessage('Frontend WebSocket is not configured.');
-            return;
-        }
-
         if (!API_URL) {
             setErrorMessage('Frontend API is not configured.');
             return;
@@ -119,27 +97,6 @@ export default function App() {
         setInfoMessage('Checking shop status...');
         setIsConnecting(true);
         setPricing(null);
-
-        const client = new FileTransferClient(normalizedShopId, WS_URL, (nextStatus) => {
-            setStatus(nextStatus);
-            if (nextStatus === 'ONLINE') {
-                setErrorMessage('');
-                setInfoMessage('Shop is online. You can upload files now.');
-            } else if (nextStatus === 'OFFLINE') {
-                setInfoMessage('');
-                setErrorMessage('Shop is offline or not connected right now.');
-            } else if (nextStatus === 'ERROR') {
-                setInfoMessage('');
-                setErrorMessage('Connection or transfer failed. On mobile data or weak networks, a TURN relay may be required.');
-            } else if (nextStatus === 'TRANSFERRING') {
-                setInfoMessage('Transfer in progress...');
-            } else if (nextStatus === 'COMPLETED') {
-                setInfoMessage('Files sent successfully.');
-            }
-        }, setProgress);
-        client.setIceServersPromise(fetchTurnIceServers(normalizedShopId));
-        client.connect();
-        transferClientRef.current = client;
         setShopId(normalizedShopId);
 
         fetch(`${API_URL}/shop/public/${encodeURIComponent(normalizedShopId)}`)
@@ -147,6 +104,19 @@ export default function App() {
             .then((data) => {
                 if (data.shop) {
                     setPricing(data.shop);
+                    transferClientRef.current = {
+                        shopId: normalizedShopId,
+                        uploadEndpoint: data.shop.pcEndpoint || null
+                    };
+                    if (data.shop.status === 'online' && data.shop.pcEndpoint) {
+                        setStatus('ONLINE');
+                        setErrorMessage('');
+                        setInfoMessage('Shop is online. You can upload files now.');
+                    } else {
+                        setStatus('OFFLINE');
+                        setInfoMessage('');
+                        setErrorMessage('Shop is offline or upload endpoint is not configured right now.');
+                    }
                 } else {
                     setErrorMessage('Shop details could not be loaded.');
                 }
@@ -230,8 +200,28 @@ export default function App() {
         setProgress(0);
 
         try {
+            const uploadTarget = transferClientRef.current?.uploadEndpoint;
+            if (!uploadTarget) {
+                throw new Error('Shop upload endpoint is not available. Ask the shop to start the PC app and tunnel.');
+            }
+
+            const tokenResponse = await fetch(`${API_URL}/auth/client-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shopCode: transferClientRef.current.shopId })
+            });
+
+            if (!tokenResponse.ok) {
+                const errorText = await tokenResponse.text();
+                throw new Error(errorText || 'Could not create upload token');
+            }
+
+            const tokenPayload = await tokenResponse.json();
+            const uploadToken = tokenPayload.token;
+
             for (let i = 0; i < files.length; i++) {
                 setCurrentFile(i + 1);
+                setStatus('TRANSFERRING');
                 const item = files[i];
                 const metadata = {
                     customerName,
@@ -250,11 +240,19 @@ export default function App() {
                     scale: item.scale || 'fit'
                 };
 
-                await transferClientRef.current.startFileTransfer(item.file, metadata);
+                await uploadFileToShop({
+                    endpoint: uploadTarget,
+                    token: uploadToken,
+                    file: item.file,
+                    metadata,
+                    onProgress: setProgress
+                });
                 await new Promise((resolve) => setTimeout(resolve, 400));
             }
             setFiles([]);
             setProgress(100);
+            setStatus('COMPLETED');
+            setInfoMessage('Files sent successfully.');
         } catch (error) {
             console.error('Transfer failed:', error);
             setStatus('ERROR');
@@ -368,7 +366,7 @@ export default function App() {
                     <>
                         <div className={`status ${status === 'ERROR' ? 'offline' : 'online'}`}>
                             {status === 'ONLINE' && 'Shop Online'}
-                            {status === 'CONNECTING' && 'Connecting Directly'}
+                            {status === 'CONNECTING' && 'Preparing Upload'}
                             {status === 'TRANSFERRING' && 'Transferring'}
                             {status === 'COMPLETED' && 'Files Sent Successfully'}
                             {status === 'ERROR' && 'Transfer Failed'}
@@ -579,6 +577,51 @@ export default function App() {
             </div>
         </div>
     );
+}
+
+function uploadFileToShop({ endpoint, token, file, metadata, onProgress }) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${String(endpoint).replace(/\/$/, '')}/upload`);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+        xhr.setRequestHeader('X-File-Size', String(file.size));
+        xhr.setRequestHeader('X-File-Type', encodeURIComponent(file.type || 'application/octet-stream'));
+        xhr.setRequestHeader('X-Customer-Name', encodeURIComponent(metadata.customerName || 'Unknown'));
+        xhr.setRequestHeader('X-Color-Pages', encodeURIComponent(metadata.colorPages || ''));
+        xhr.setRequestHeader('X-BW-Pages', encodeURIComponent(metadata.bwPages || ''));
+        xhr.setRequestHeader('X-Paper-Size', encodeURIComponent(metadata.paperSize || 'A4'));
+        xhr.setRequestHeader('X-Orientation', encodeURIComponent(metadata.orientation || 'portrait'));
+        xhr.setRequestHeader('X-Copies', String(Number(metadata.copies || 1)));
+        xhr.setRequestHeader('X-Duplex', encodeURIComponent(metadata.duplex || 'simplex'));
+        xhr.setRequestHeader('X-Scale', encodeURIComponent(metadata.scale || 'fit'));
+        xhr.setRequestHeader('X-File-Index', String(metadata.fileIndex || 1));
+        xhr.setRequestHeader('X-Total-Files', String(metadata.totalFiles || 1));
+
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+                onProgress((event.loaded / event.total) * 100);
+            }
+        };
+
+        xhr.onerror = () => reject(new Error('Upload failed. Check the shop tunnel and try again.'));
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve();
+                return;
+            }
+
+            try {
+                const payload = JSON.parse(xhr.responseText || '{}');
+                reject(new Error(payload.error || 'Upload failed'));
+            } catch {
+                reject(new Error(xhr.responseText || 'Upload failed'));
+            }
+        };
+
+        xhr.send(file);
+    });
 }
 
 function normalizeShopCode(value) {

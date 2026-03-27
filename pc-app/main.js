@@ -1,12 +1,22 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const Store = require('electron-store');
 const QRCode = require('qrcode');
 const pdfPrinter = require('pdf-to-printer');
 
 const APP_ID = 'com.jayanthgopala.printshop.pcapp';
 const APP_DATA_DIR_NAME = 'Print Shop Manager';
+const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']);
+const ALLOWED_MIME_TYPES = new Set([
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/jpeg',
+    'image/png'
+]);
 
 loadLocalEnv(path.join(__dirname, '.env'));
 
@@ -14,12 +24,14 @@ configureAppPaths();
 
 const store = new Store();
 let mainWindow;
+let uploadServer = null;
+let uploadServerPort = null;
+let heartbeatTimer = null;
 
 // Default to the deployed Worker backend; env vars can still override this.
 const DEFAULT_API_URL = 'https://print-app-backend.jayanthgopala21.workers.dev';
 const API_URL = process.env.API_URL || DEFAULT_API_URL;
-const WS_URL = process.env.WS_URL || API_URL.replace(/^http/, 'ws');
-log('PC app backend config:', { API_URL, WS_URL });
+log('PC app backend config:', { API_URL });
 
 app.setAppUserModelId(APP_ID);
 
@@ -60,60 +72,6 @@ function loadLocalEnv(envPath) {
     }
 }
 
-function getIceServersFromEnv() {
-    const defaultStunUrls = [
-        'stun:stun.l.google.com:19302',
-        'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302'
-    ];
-    const configuredStunUrls = String(process.env.STUN_URLS || '')
-        .split(',')
-        .map((value) => value.trim())
-        .filter(Boolean);
-    const stunUrls = configuredStunUrls.length > 0 ? configuredStunUrls : defaultStunUrls;
-    const iceServers = stunUrls.map((urls) => ({ urls }));
-
-    const turnUrl = String(process.env.TURN_URL || '').trim();
-    const turnUsername = String(process.env.TURN_USERNAME || '').trim();
-    const turnCredential = String(process.env.TURN_CREDENTIAL || '').trim();
-
-    if (turnUrl) {
-        iceServers.push({
-            urls: turnUrl,
-            username: turnUsername,
-            credential: turnCredential
-        });
-    }
-
-    return iceServers;
-}
-
-async function fetchTurnIceServers(apiUrl, shopId) {
-    if (!apiUrl || !shopId) {
-        return [];
-    }
-
-    try {
-        const response = await fetch(`${apiUrl.replace(/\/$/, '')}/turn/ice-servers`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ shopId, ttl: 3600 })
-        });
-
-        if (!response.ok) {
-            const message = await response.text();
-            log('TURN credential fetch failed:', response.status, message);
-            return [];
-        }
-
-        const payload = await response.json();
-        return Array.isArray(payload?.iceServers) ? payload.iceServers : [];
-    } catch (error) {
-        log('TURN credential fetch error:', formatError(error));
-        return [];
-    }
-}
-
 function getLogPath() {
     try {
         return path.join(app.getPath('userData'), 'pc-app.log');
@@ -141,6 +99,261 @@ function log(...args) {
     } catch {}
 
     console.log(...args);
+}
+
+async function updatePcStatus(status, endpoint = undefined) {
+    const token = store.get('token');
+    if (!token) return;
+
+    const payload = { status };
+    if (endpoint !== undefined) {
+        payload.endpoint = endpoint;
+    }
+
+    try {
+        await fetch(`${API_URL}/pc/status`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+    } catch (error) {
+        log('PC status update failed:', formatError(error));
+    }
+}
+
+async function verifyClientUploadToken(token) {
+    const response = await fetch(`${API_URL}/auth/verify-client-token`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${token}`
+        }
+    });
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || 'Upload token verification failed');
+    }
+
+    return response.json();
+}
+
+function decodeHeaderValue(value, fallback = '') {
+    try {
+        return decodeURIComponent(String(value || fallback));
+    } catch {
+        return String(value || fallback);
+    }
+}
+
+function normalizePublicUploadUrl(value) {
+    const normalized = String(value || '').trim().replace(/\/+$/, '');
+    if (!normalized) {
+        return '';
+    }
+
+    let parsed;
+    try {
+        parsed = new URL(normalized);
+    } catch {
+        throw new Error('Tunnel Public Upload URL must be a valid http or https URL');
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('Tunnel Public Upload URL must use http or https');
+    }
+
+    return parsed.toString().replace(/\/+$/, '');
+}
+
+function parseUploadPort(value) {
+    const port = Number(value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error('Local Upload Port must be between 1 and 65535');
+    }
+
+    return port;
+}
+
+function validateIncomingUpload({ fileName, fileType, declaredSize, copies, fileIndex, totalFiles }) {
+    const normalizedFileName = path.basename(String(fileName || '').trim());
+    const extension = path.extname(normalizedFileName).toLowerCase();
+    const normalizedType = String(fileType || '').trim().toLowerCase();
+
+    if (!normalizedFileName || !ALLOWED_EXTENSIONS.has(extension)) {
+        throw new Error('Unsupported file type');
+    }
+    if (normalizedType && !ALLOWED_MIME_TYPES.has(normalizedType)) {
+        throw new Error('Unsupported MIME type');
+    }
+    if (!Number.isFinite(declaredSize) || declaredSize <= 0 || declaredSize > MAX_FILE_SIZE_BYTES) {
+        throw new Error('Invalid file size');
+    }
+    if (!Number.isFinite(copies) || copies < 1 || copies > 20) {
+        throw new Error('Invalid copies value');
+    }
+    if (!Number.isFinite(fileIndex) || fileIndex < 1 || !Number.isFinite(totalFiles) || totalFiles < fileIndex) {
+        throw new Error('Invalid file ordering metadata');
+    }
+}
+
+async function startUploadServer(shopId, requestedPort) {
+    const port = parseUploadPort(requestedPort);
+
+    if (uploadServer) {
+        if (uploadServerPort === port) {
+            return { port: uploadServer.address()?.port || port };
+        }
+        stopUploadServer();
+    }
+
+    uploadServer = http.createServer(async (req, res) => {
+        if (req.method === 'OPTIONS') {
+            res.writeHead(204, buildUploadCorsHeaders());
+            res.end();
+            return;
+        }
+
+        if (req.method === 'GET' && req.url === '/health') {
+            res.writeHead(200, { ...buildUploadCorsHeaders(), 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ok', shopId }));
+            return;
+        }
+
+        if (req.method !== 'POST' || req.url !== '/upload') {
+            res.writeHead(404, buildUploadCorsHeaders());
+            res.end('Not found');
+            return;
+        }
+
+        try {
+            const authHeader = String(req.headers.authorization || '');
+            const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+            if (!token) {
+                throw new Error('Missing upload token');
+            }
+
+            const tokenInfo = await verifyClientUploadToken(token);
+            if (normalizeShopCode(tokenInfo.shopCode) !== normalizeShopCode(shopId)) {
+                throw new Error('Upload token shop mismatch');
+            }
+
+            const fileName = decodeHeaderValue(req.headers['x-file-name'], 'upload.bin');
+            const fileType = decodeHeaderValue(req.headers['x-file-type'], 'application/octet-stream');
+            const customerName = decodeHeaderValue(req.headers['x-customer-name'], 'Unknown');
+            const colorPages = decodeHeaderValue(req.headers['x-color-pages'], '');
+            const bwPages = decodeHeaderValue(req.headers['x-bw-pages'], '');
+            const paperSize = decodeHeaderValue(req.headers['x-paper-size'], 'A4');
+            const orientation = decodeHeaderValue(req.headers['x-orientation'], 'portrait');
+            const duplex = decodeHeaderValue(req.headers['x-duplex'], 'simplex');
+            const scale = decodeHeaderValue(req.headers['x-scale'], 'fit');
+            const copies = Math.max(1, Number(req.headers['x-copies'] || 1));
+            const fileIndex = Math.max(1, Number(req.headers['x-file-index'] || 1));
+            const totalFiles = Math.max(1, Number(req.headers['x-total-files'] || 1));
+            const declaredSize = Number(req.headers['x-file-size'] || 0);
+            validateIncomingUpload({ fileName, fileType, declaredSize, copies, fileIndex, totalFiles });
+
+            const chunks = [];
+            let totalBytes = 0;
+            req.on('data', (chunk) => {
+                totalBytes += chunk.length;
+                if (totalBytes > MAX_FILE_SIZE_BYTES) {
+                    req.destroy(new Error('File too large'));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+
+            req.on('end', () => {
+                const buffer = Buffer.concat(chunks);
+                if (declaredSize > 0 && buffer.length !== declaredSize) {
+                    res.writeHead(400, { ...buildUploadCorsHeaders(), 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'Incomplete upload' }));
+                    return;
+                }
+
+                const filePath = saveReceivedFile(store.get('downloadPath', app.getPath('downloads')), fileName, buffer);
+                const order = {
+                    customerName,
+                    fileName,
+                    fileType,
+                    filePath,
+                    colorPages,
+                    bwPages,
+                    paperSize,
+                    orientation,
+                    copies,
+                    duplex,
+                    scale,
+                    fileIndex,
+                    totalFiles,
+                    shopId
+                };
+
+                log('HTTP upload received:', { fileName, bytes: buffer.length, shopId });
+                if (mainWindow) {
+                    mainWindow.webContents.send('file-received', order);
+                }
+
+                res.writeHead(200, { ...buildUploadCorsHeaders(), 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: true, filePath }));
+            });
+
+            req.on('error', (error) => {
+                log('Upload request failed:', formatError(error));
+                if (!res.headersSent) {
+                    res.writeHead(400, { ...buildUploadCorsHeaders(), 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: error.message || 'Upload failed' }));
+                }
+            });
+        } catch (error) {
+            log('Upload handling failed:', formatError(error));
+            res.writeHead(401, { ...buildUploadCorsHeaders(), 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Unauthorized' }));
+        }
+    });
+
+    await new Promise((resolve, reject) => {
+        uploadServer.once('error', reject);
+        uploadServer.listen(port, '0.0.0.0', () => {
+            uploadServer.off('error', reject);
+            resolve();
+        });
+    });
+
+    uploadServerPort = port;
+    log('Upload server listening on port', port);
+    return { port };
+}
+
+function buildUploadCorsHeaders() {
+    return {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-File-Name,X-File-Size,X-File-Type,X-Customer-Name,X-Color-Pages,X-BW-Pages,X-Paper-Size,X-Orientation,X-Copies,X-Duplex,X-Scale,X-File-Index,X-Total-Files',
+        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS'
+    };
+}
+
+function normalizeShopCode(value) {
+    return String(value || '').trim().replace(/[<>]/g, '').toUpperCase();
+}
+
+function stopUploadServer() {
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+    }
+    if (uploadServer) {
+        try {
+            uploadServer.close();
+        } catch (error) {
+            log('Failed to close upload server:', formatError(error));
+        }
+        uploadServer = null;
+        uploadServerPort = null;
+    }
 }
 
 function createWindow() {
@@ -190,6 +403,8 @@ app.on('child-process-gone', (event, details) => {
 });
 app.on('before-quit', () => {
     log('App quitting');
+    stopUploadServer();
+    void updatePcStatus('offline', null);
 });
 
 ipcMain.handle('get-settings', () => ({
@@ -200,7 +415,9 @@ ipcMain.handle('get-settings', () => ({
     bwPrice: store.get('bwPrice'),
     colorPrinter: store.get('colorPrinter', ''),
     bwPrinter: store.get('bwPrinter', ''),
-    password: store.get('password', '')
+    password: store.get('password', ''),
+    uploadPublicUrl: store.get('uploadPublicUrl', process.env.UPLOAD_PUBLIC_URL || ''),
+    uploadPort: store.get('uploadPort', Number(process.env.UPLOAD_PORT || 8788))
 }));
 
 ipcMain.handle('save-settings', async (event, settings) => {
@@ -217,6 +434,8 @@ ipcMain.handle('save-settings', async (event, settings) => {
     if (password) store.set('password', password);
     store.set('colorPrinter', settings.colorPrinter || '');
     store.set('bwPrinter', settings.bwPrinter || '');
+    store.set('uploadPublicUrl', settings.uploadPublicUrl || process.env.UPLOAD_PUBLIC_URL || '');
+    store.set('uploadPort', Number(settings.uploadPort || process.env.UPLOAD_PORT || 8788));
 
     try {
         if (!/^https?:\/\//i.test(API_URL)) {
@@ -339,12 +558,36 @@ ipcMain.handle('start-service', async () => {
     const shopId = store.get('shopId');
     const token = store.get('token');
     const downloadPath = store.get('downloadPath', app.getPath('downloads'));
+    let uploadPublicUrl;
 
     if (!shopId || !token) {
         return { success: false, message: 'Missing credentials' };
     }
 
-    const dynamicIceServers = await fetchTurnIceServers(API_URL, shopId);
+    let uploadPort;
+    try {
+        uploadPublicUrl = normalizePublicUploadUrl(store.get('uploadPublicUrl', process.env.UPLOAD_PUBLIC_URL || ''));
+        if (!uploadPublicUrl) {
+            return { success: false, message: 'Tunnel Public Upload URL is required before starting the service.' };
+        }
+        uploadPort = parseUploadPort(store.get('uploadPort', process.env.UPLOAD_PORT || 8788) || 8788);
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+
+    try {
+        await startUploadServer(shopId, uploadPort);
+    } catch (error) {
+        return { success: false, message: `Upload server failed to start: ${error.message}` };
+    }
+
+    await updatePcStatus('online', uploadPublicUrl || null);
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+    }
+    heartbeatTimer = setInterval(() => {
+        void updatePcStatus('online', uploadPublicUrl || null);
+    }, 30000);
 
     return {
         success: true,
@@ -352,8 +595,8 @@ ipcMain.handle('start-service', async () => {
             shopId,
             token,
             downloadPath,
-            wsUrl: WS_URL,
-            iceServers: dynamicIceServers.length > 0 ? dynamicIceServers : getIceServersFromEnv()
+            uploadPublicUrl,
+            uploadPort
         }
     };
 });
