@@ -102,7 +102,7 @@ function log(...args) {
 }
 
 async function updatePcStatus(status, endpoint = undefined) {
-    const token = store.get('token');
+    const token = store.get('shopToken') || store.get('token');
     if (!token) return;
 
     const payload = { status };
@@ -410,6 +410,7 @@ app.on('before-quit', () => {
 ipcMain.handle('get-settings', () => ({
     shopId: store.get('shopId', ''),
     token: store.get('token', ''),
+    shopToken: store.get('shopToken', ''),
     downloadPath: store.get('downloadPath', app.getPath('downloads')),
     colorPrice: store.get('colorPrice'),
     bwPrice: store.get('bwPrice'),
@@ -495,6 +496,25 @@ ipcMain.handle('save-settings', async (event, settings) => {
             return { success: false, message: err.message };
         }
 
+        try {
+            const shopTokenResp = await fetch(`${API_URL}/auth/shop-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shopCode: shopId, password })
+            });
+            const shopTokenData = await shopTokenResp.json();
+            if (shopTokenResp.ok && shopTokenData.token) {
+                store.set('shopToken', shopTokenData.token);
+                log('Shop token issued for status updates');
+            } else {
+                log('Shop token request failed:', shopTokenData);
+                return { success: false, message: shopTokenData.error || 'Could not create shop service token' };
+            }
+        } catch (err) {
+            log('Shop token request failed:', err.message);
+            return { success: false, message: err.message };
+        }
+
         // Update prices in database (best-effort)
         if (colorPrice && bwPrice && shopId) {
             log('Updating database prices...');
@@ -518,7 +538,7 @@ ipcMain.handle('save-settings', async (event, settings) => {
             }
         }
 
-        return { success: true, token: store.get('token') };
+        return { success: true, token: store.get('token'), shopToken: store.get('shopToken') };
     } catch (error) {
         console.error('Save settings error:', error);
         return { success: false, message: error.message };
@@ -568,7 +588,7 @@ ipcMain.handle('start-service', async () => {
     try {
         uploadPublicUrl = normalizePublicUploadUrl(store.get('uploadPublicUrl', process.env.UPLOAD_PUBLIC_URL || ''));
         if (!uploadPublicUrl) {
-            return { success: false, message: 'Tunnel Public Upload URL is required before starting the service.' };
+            return { success: false, message: 'Upload endpoint is not configured on this PC.' };
         }
         uploadPort = parseUploadPort(store.get('uploadPort', process.env.UPLOAD_PORT || 8788) || 8788);
     } catch (error) {

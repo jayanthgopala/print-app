@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { API_URL } from './config';
 import './App.css';
 
+const SHARED_FILES_DB = 'printshop-share-target';
+const SHARED_FILES_STORE = 'pending-files';
 const DEFAULT_PRINT_SETTINGS = {
     colorPages: '',
     bwPages: '',
@@ -30,6 +32,7 @@ export default function App() {
     const [infoMessage, setInfoMessage] = useState('');
     const [isConnecting, setIsConnecting] = useState(false);
     const [isSending, setIsSending] = useState(false);
+    const [isDragActive, setIsDragActive] = useState(false);
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -47,10 +50,18 @@ export default function App() {
             setInstallPrompt(e);
             setShowInstallBanner(true);
         };
+        const onServiceWorkerMessage = (event) => {
+            if (event.data?.type === 'SHARED_FILES_READY') {
+                handleSharedFiles();
+            }
+        };
+
         window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+        navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage);
 
         return () => {
             window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+            navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage);
             transferClientRef.current = null;
         };
     }, []);
@@ -64,6 +75,23 @@ export default function App() {
         if (sharedTitle || sharedText || sharedUrl) {
             setStatus('SHARED_MODE');
             if (sharedText) setCustomerName(sharedText.substring(0, 50));
+        }
+
+        try {
+            const sharedFiles = await takePendingSharedFiles();
+            if (sharedFiles.length > 0) {
+                const preparedFiles = prepareIncomingFiles(sharedFiles);
+                if (preparedFiles.validFiles.length > 0) {
+                    setFiles((current) => [...current, ...preparedFiles.validFiles]);
+                    setInfoMessage(`Loaded ${preparedFiles.validFiles.length} shared file${preparedFiles.validFiles.length > 1 ? 's' : ''}.`);
+                    setErrorMessage(preparedFiles.invalidFiles.join(' | '));
+                    setStatus('SHARED_MODE');
+                } else if (preparedFiles.invalidFiles.length > 0) {
+                    setErrorMessage(preparedFiles.invalidFiles.join(' | '));
+                }
+            }
+        } catch {
+            setErrorMessage('Shared files could not be loaded on this device.');
         }
 
         const url = new URL(window.location.href);
@@ -129,36 +157,25 @@ export default function App() {
             });
     };
 
-    const handleFileSelect = (e) => {
-        const selectedFiles = Array.from(e.target.files);
-        const validFiles = [];
-        const invalidFiles = [];
+    const appendFiles = (selectedFiles) => {
+        const { validFiles, invalidFiles } = prepareIncomingFiles(selectedFiles);
 
-        for (const file of selectedFiles) {
-            if (!isAllowedFileType(file)) {
-                invalidFiles.push(`${file.name}: unsupported file type`);
-                continue;
-            }
-            if (file.size <= 0 || file.size > 100 * 1024 * 1024) {
-                invalidFiles.push(`${file.name}: file size must be 1 byte to 100 MB`);
-                continue;
-            }
-            validFiles.push({
-                file,
-                ...DEFAULT_PRINT_SETTINGS
-            });
-        }
-
-        if (invalidFiles.length > 0) {
-            setErrorMessage(invalidFiles.join(' | '));
-        } else {
-            setErrorMessage('');
-        }
-
+        setErrorMessage(invalidFiles.join(' | '));
         if (validFiles.length > 0) {
             setFiles((current) => [...current, ...validFiles]);
+            setInfoMessage(`Added ${validFiles.length} file${validFiles.length > 1 ? 's' : ''}.`);
         }
+    };
+
+    const handleFileSelect = (e) => {
+        appendFiles(Array.from(e.target.files || []));
         e.target.value = '';
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setIsDragActive(false);
+        appendFiles(Array.from(e.dataTransfer.files || []));
     };
 
     const updateFilePages = (index, field, value) => {
@@ -387,13 +404,29 @@ export default function App() {
                             maxLength={50}
                         />
 
-                        <input
-                            type="file"
-                            multiple
-                            onChange={handleFileSelect}
-                            className="file-input"
-                            accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                        />
+                        <label
+                            className={`file-picker ${isDragActive ? 'drag-active' : ''}`}
+                            onDragOver={(e) => {
+                                e.preventDefault();
+                                setIsDragActive(true);
+                            }}
+                            onDragLeave={(e) => {
+                                if (!e.currentTarget.contains(e.relatedTarget)) {
+                                    setIsDragActive(false);
+                                }
+                            }}
+                            onDrop={handleDrop}
+                        >
+                            <input
+                                type="file"
+                                multiple
+                                onChange={handleFileSelect}
+                                className="file-input"
+                                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                            />
+                            <span className="file-picker-title">Choose files or drag them here</span>
+                            <span className="file-picker-copy">PDF, DOC, DOCX, JPG, JPEG, PNG up to 100 MB each</span>
+                        </label>
 
                         {files.length > 0 && (
                             <div className="files-list">
@@ -628,6 +661,28 @@ function normalizeShopCode(value) {
     return String(value || '').trim().replace(/[<>]/g, '').toUpperCase();
 }
 
+function prepareIncomingFiles(selectedFiles) {
+    const validFiles = [];
+    const invalidFiles = [];
+
+    for (const file of selectedFiles) {
+        if (!isAllowedFileType(file)) {
+            invalidFiles.push(`${file.name}: unsupported file type`);
+            continue;
+        }
+        if (file.size <= 0 || file.size > 100 * 1024 * 1024) {
+            invalidFiles.push(`${file.name}: file size must be 1 byte to 100 MB`);
+            continue;
+        }
+        validFiles.push({
+            file,
+            ...DEFAULT_PRINT_SETTINGS
+        });
+    }
+
+    return { validFiles, invalidFiles };
+}
+
 function isAllowedFileType(file) {
     return new Set([
         'application/pdf',
@@ -659,4 +714,37 @@ function validateSubmission({ customerName, files }) {
     }
 
     return '';
+}
+
+async function takePendingSharedFiles() {
+    const database = await openSharedFilesDb();
+
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction(SHARED_FILES_STORE, 'readwrite');
+        const store = transaction.objectStore(SHARED_FILES_STORE);
+        const getRequest = store.get('latest');
+
+        getRequest.onerror = () => reject(getRequest.error);
+        getRequest.onsuccess = () => {
+            const files = Array.isArray(getRequest.result?.files) ? getRequest.result.files : [];
+            const deleteRequest = store.delete('latest');
+            deleteRequest.onerror = () => reject(deleteRequest.error);
+            deleteRequest.onsuccess = () => resolve(files);
+        };
+    });
+}
+
+function openSharedFilesDb() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(SHARED_FILES_DB, 1);
+
+        request.onupgradeneeded = () => {
+            const database = request.result;
+            if (!database.objectStoreNames.contains(SHARED_FILES_STORE)) {
+                database.createObjectStore(SHARED_FILES_STORE);
+            }
+        };
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+    });
 }

@@ -22,13 +22,25 @@
     }
   ],
   "share_target": {
-    "action": "/",
+    "action": "/share",
     "method": "POST",
     "enctype": "multipart/form-data",
     "params": {
       "title": "title",
       "text": "text",
-      "url": "url"
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": [
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "image/jpeg",
+            "image/png"
+          ]
+        }
+      ]
     }
   }
 }

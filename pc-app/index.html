@@ -737,17 +737,8 @@
                             </div>
                         </div>
 
-                        <div class="field-card full">
-                            <label for="uploadPublicUrl">Tunnel Public Upload URL</label>
-                            <input type="text" id="uploadPublicUrl" placeholder="https://your-tunnel-domain.example">
-                            <div class="hint">Set this to the public Cloudflare Tunnel URL that forwards to the local upload server.</div>
-                        </div>
-
-                        <div class="field-card">
-                            <label for="uploadPort">Local Upload Port</label>
-                            <input type="number" id="uploadPort" min="1" max="65535" value="8788">
-                            <div class="hint">`cloudflared` should forward to this local port.</div>
-                        </div>
+                        <input type="hidden" id="uploadPublicUrl">
+                        <input type="hidden" id="uploadPort" value="8788">
 
                         <div class="field-card accent full">
                             <label>Pricing</label>

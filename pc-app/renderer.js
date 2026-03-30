@@ -174,8 +174,10 @@ async function saveAndStart() {
         clearMessage();
         document.getElementById('statusBadge').textContent = 'Online';
         document.getElementById('statusBadge').className = 'status online';
-        showMessage(`Upload server ready on port ${result.config.uploadPort}${result.config.uploadPublicUrl ? ` | Public URL: ${result.config.uploadPublicUrl}` : ''}`, 'success');
+        showMessage('Service is online. Customers should upload only through the frontend.', 'success');
     } else {
+        document.getElementById('statusBadge').textContent = 'Offline';
+        document.getElementById('statusBadge').className = 'status offline';
         showMessage('Error: ' + result.message, 'error');
     }
 }

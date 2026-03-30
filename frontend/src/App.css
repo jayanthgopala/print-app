@@ -173,11 +173,41 @@ h1 {
 }
 
 .file-input {
-  padding: 10px;
+  display: none;
+}
+
+.file-picker {
+  display: grid;
+  gap: 8px;
+  padding: 24px 18px;
   border: 2px dashed #667eea;
-  border-radius: 8px;
+  border-radius: 16px;
   margin: 15px 0;
   cursor: pointer;
+  background:
+    radial-gradient(circle at top left, rgba(102, 126, 234, 0.16), transparent 35%),
+    linear-gradient(180deg, rgba(102, 126, 234, 0.06), rgba(118, 75, 162, 0.03));
+  text-align: center;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.file-picker:hover,
+.file-picker.drag-active {
+  border-color: #4f46e5;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(102, 126, 234, 0.12);
+}
+
+.file-picker-title {
+  color: #1f2937;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.file-picker-copy {
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .files-list {
@@ -190,6 +220,14 @@ h1 {
 @media (max-width: 480px) {
   .files-list {
     max-height: 250px;
+  }
+
+  .file-picker {
+    padding: 18px 14px;
+  }
+
+  .file-picker-title {
+    font-size: 15px;
   }
 }
 
