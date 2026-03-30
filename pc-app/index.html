@@ -737,8 +737,17 @@
                             </div>
                         </div>
 
-                        <input type="hidden" id="uploadPublicUrl">
-                        <input type="hidden" id="uploadPort" value="8788">
+                        <div class="field-card">
+                            <label>Upload Public URL (Tunnel URL)</label>
+                            <input type="text" id="uploadPublicUrl" placeholder="https://your-tunnel-url.trycloudflare.com">
+                            <div class="field-hint">Set up a Cloudflare tunnel first, then paste the URL here</div>
+                        </div>
+
+                        <div class="field-card">
+                            <label>Upload Port</label>
+                            <input type="number" id="uploadPort" value="8788" placeholder="8788">
+                            <div class="field-hint">Local port for upload server (default: 8788)</div>
+                        </div>
 
                         <div class="field-card accent full">
                             <label>Pricing</label>
