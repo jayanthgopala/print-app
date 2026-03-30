@@ -18,6 +18,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     const uploadPortEl = document.getElementById('uploadPort');
     if (uploadPortEl) uploadPortEl.value = settings.uploadPort || 8788;
     
+    // Listen for tunnel status updates
+    window.electronAPI.onTunnelStatus((data) => {
+        console.log('Tunnel status:', data);
+        if (data.status === 'online' && data.url) {
+            showMessage(`Tunnel connected: ${data.url}`, 'success', 5000);
+        } else if (data.status === 'starting') {
+            showMessage('Starting tunnel...', 'info', 3000);
+        } else if (data.status === 'error') {
+            showMessage(`Tunnel error: ${data.error}`, 'error');
+        }
+    });
+    
     // Only set prices if they exist in settings, otherwise leave empty for user to enter
     if (settings.colorPrice) {
         document.getElementById('colorPrice').value = settings.colorPrice;
@@ -174,7 +186,13 @@ async function saveAndStart() {
         clearMessage();
         document.getElementById('statusBadge').textContent = 'Online';
         document.getElementById('statusBadge').className = 'status online';
-        showMessage('Service is online. Customers should upload only through the frontend.', 'success');
+        
+        const autoTunnelNote = result.config && result.config.autoTunnel ? ' (Auto-tunnel active)' : '';
+        showMessage(`Service is online${autoTunnelNote}. Customers should upload only through the frontend.`, 'success');
+        
+        if (result.config && result.config.uploadPublicUrl) {
+            showMessage(`Tunnel URL: ${result.config.uploadPublicUrl}`, 'info');
+        }
     } else {
         document.getElementById('statusBadge').textContent = 'Offline';
         document.getElementById('statusBadge').className = 'status offline';
@@ -231,7 +249,7 @@ async function printQR() {
     }
 }
 
-function showMessage(text, type = 'error') {
+function showMessage(text, type = 'error', autoHideMs = 0) {
     const el = document.getElementById('uiMessage');
     if (!el) {
         alert(text);
@@ -243,10 +261,20 @@ function showMessage(text, type = 'error') {
         el.style.background = '#fdecea';
         el.style.color = '#611a15';
         el.style.border = '1px solid #f5c6cb';
+    } else if (type === 'info') {
+        el.style.background = '#d1ecf1';
+        el.style.color = '#0c5460';
+        el.style.border = '1px solid #bee5eb';
     } else {
         el.style.background = '#e9f7ef';
         el.style.color = '#155724';
         el.style.border = '1px solid #c3e6cb';
+    }
+    
+    if (autoHideMs > 0) {
+        setTimeout(() => {
+            clearMessage();
+        }, autoHideMs);
     }
 }
 

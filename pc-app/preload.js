@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     printFile: (filePath, options) => ipcRenderer.invoke('print-file', filePath, options),
     openNativePrintDialog: (filePath) => ipcRenderer.invoke('open-native-print-dialog', filePath),
     deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),
-    onFileReceived: (callback) => ipcRenderer.on('file-received', (event, data) => callback(data))
+    onFileReceived: (callback) => ipcRenderer.on('file-received', (event, data) => callback(data)),
+    onTunnelStatus: (callback) => ipcRenderer.on('tunnel-status', (event, data) => callback(data))
 });

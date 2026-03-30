@@ -5,6 +5,7 @@ const http = require('http');
 const Store = require('electron-store');
 const QRCode = require('qrcode');
 const pdfPrinter = require('pdf-to-printer');
+const TunnelManager = require('./tunnel-manager');
 
 const APP_ID = 'com.jayanthgopala.printshop.pcapp';
 const APP_DATA_DIR_NAME = 'Print Shop Manager';
@@ -27,6 +28,7 @@ let mainWindow;
 let uploadServer = null;
 let uploadServerPort = null;
 let heartbeatTimer = null;
+let tunnelManager = null;
 
 // Default to the deployed Worker backend; env vars can still override this.
 const DEFAULT_API_URL = 'https://print-app-backend.jayanthgopala21.workers.dev';
@@ -404,6 +406,9 @@ app.on('child-process-gone', (event, details) => {
 app.on('before-quit', () => {
     log('App quitting');
     stopUploadServer();
+    if (tunnelManager) {
+        tunnelManager.stop();
+    }
     void updatePcStatus('offline', null);
 });
 
@@ -578,7 +583,6 @@ ipcMain.handle('start-service', async () => {
     const shopId = store.get('shopId');
     const token = store.get('token');
     const downloadPath = store.get('downloadPath', app.getPath('downloads'));
-    let uploadPublicUrl;
 
     if (!shopId || !token) {
         return { success: false, message: 'Missing credentials' };
@@ -586,27 +590,92 @@ ipcMain.handle('start-service', async () => {
 
     let uploadPort;
     try {
-        uploadPublicUrl = normalizePublicUploadUrl(store.get('uploadPublicUrl', process.env.UPLOAD_PUBLIC_URL || ''));
-        if (!uploadPublicUrl) {
-            return { success: false, message: 'Upload endpoint is not configured on this PC.' };
-        }
         uploadPort = parseUploadPort(store.get('uploadPort', process.env.UPLOAD_PORT || 8788) || 8788);
     } catch (error) {
         return { success: false, message: error.message };
     }
 
+    // Check if manual URL is configured (backwards compatibility)
+    const manualUrl = store.get('uploadPublicUrl', process.env.UPLOAD_PUBLIC_URL || '');
+    let uploadPublicUrl = null;
+    
+    if (manualUrl && manualUrl.trim()) {
+        // Use manual URL if provided
+        try {
+            uploadPublicUrl = normalizePublicUploadUrl(manualUrl);
+            log('Using manual tunnel URL:', uploadPublicUrl);
+        } catch (error) {
+            return { success: false, message: `Invalid upload URL: ${error.message}` };
+        }
+    } else {
+        // Auto-start tunnel (production mode)
+        log('Starting automatic tunnel...');
+        
+        // Check if cloudflared is installed
+        const installed = await TunnelManager.checkInstalled();
+        if (!installed.installed) {
+            return {
+                success: false,
+                message: 'Cloudflared not installed. Please install cloudflared from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/'
+            };
+        }
+
+        // Initialize tunnel manager if not already created
+        if (!tunnelManager) {
+            tunnelManager = new TunnelManager({
+                port: uploadPort,
+                logPath: path.join(__dirname, 'tunnel.log'),
+                onStatusChange: (status, url, error) => {
+                    log('Tunnel status changed:', status, url, error);
+                    if (mainWindow) {
+                        mainWindow.webContents.send('tunnel-status', { status, url, error });
+                    }
+                },
+                onUrlDetected: async (url) => {
+                    log('Tunnel URL detected:', url);
+                    // Auto-update backend with new tunnel URL
+                    await updatePcStatus('online', url);
+                }
+            });
+        }
+
+        // Start tunnel
+        try {
+            const tunnelResult = await tunnelManager.start();
+            if (!tunnelResult.success) {
+                return { success: false, message: 'Failed to start tunnel' };
+            }
+            uploadPublicUrl = tunnelResult.url;
+            log('Tunnel started successfully:', uploadPublicUrl);
+        } catch (error) {
+            log('Tunnel start error:', error);
+            return {
+                success: false,
+                message: `Failed to start tunnel: ${error.message}`
+            };
+        }
+    }
+
+    // Start local upload server
     try {
         await startUploadServer(shopId, uploadPort);
     } catch (error) {
+        if (tunnelManager) {
+            tunnelManager.stop();
+        }
         return { success: false, message: `Upload server failed to start: ${error.message}` };
     }
 
+    // Update backend status
     await updatePcStatus('online', uploadPublicUrl || null);
+    
+    // Setup heartbeat
     if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
     }
     heartbeatTimer = setInterval(() => {
-        void updatePcStatus('online', uploadPublicUrl || null);
+        const currentUrl = tunnelManager ? tunnelManager.getUrl() : uploadPublicUrl;
+        void updatePcStatus('online', currentUrl || null);
     }, 30000);
 
     return {
@@ -616,7 +685,8 @@ ipcMain.handle('start-service', async () => {
             token,
             downloadPath,
             uploadPublicUrl,
-            uploadPort
+            uploadPort,
+            autoTunnel: !manualUrl
         }
     };
 });
