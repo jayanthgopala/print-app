@@ -63,7 +63,7 @@ class TunnelManager {
                         clearTimeout(timeout);
                         this.tunnelUrl = urlMatch[0];
                         console.log(`Tunnel URL detected: ${this.tunnelUrl}`);
-                        this.statusCallback('online', this.tunnelUrl);
+                        this.statusCallback('url-detected', this.tunnelUrl);
                         this.urlCallback(this.tunnelUrl);
                         resolve({ success: true, url: this.tunnelUrl });
                     }
@@ -80,7 +80,7 @@ class TunnelManager {
                         clearTimeout(timeout);
                         this.tunnelUrl = urlMatch[0];
                         console.log(`Tunnel URL detected: ${this.tunnelUrl}`);
-                        this.statusCallback('online', this.tunnelUrl);
+                        this.statusCallback('url-detected', this.tunnelUrl);
                         this.urlCallback(this.tunnelUrl);
                         resolve({ success: true, url: this.tunnelUrl });
                     }
