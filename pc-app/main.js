@@ -229,6 +229,8 @@ async function startUploadServer(shopId, requestedPort) {
     }
 
     uploadServer = http.createServer(async (req, res) => {
+        log('Upload server request:', { method: req.method, url: req.url });
+
         if (req.method === 'OPTIONS') {
             res.writeHead(204, buildUploadCorsHeaders());
             res.end();
@@ -254,6 +256,7 @@ async function startUploadServer(shopId, requestedPort) {
                 throw new Error('Missing upload token');
             }
 
+            log('Verifying upload token for incoming request');
             const tokenInfo = await verifyClientUploadToken(token);
             if (normalizeShopCode(tokenInfo.shopCode) !== normalizeShopCode(shopId)) {
                 throw new Error('Upload token shop mismatch');
@@ -273,6 +276,7 @@ async function startUploadServer(shopId, requestedPort) {
             const totalFiles = Math.max(1, Number(req.headers['x-total-files'] || 1));
             const declaredSize = Number(req.headers['x-file-size'] || 0);
             validateIncomingUpload({ fileName, fileType, declaredSize, copies, fileIndex, totalFiles });
+            log('Upload accepted:', { fileName, declaredSize, shopId });
 
             const chunks = [];
             let totalBytes = 0;

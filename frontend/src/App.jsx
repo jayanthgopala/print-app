@@ -265,6 +265,14 @@ export default function App() {
                 throw new Error('Shop upload endpoint is not available. Ask the shop to start the PC app and tunnel.');
             }
 
+            const healthResponse = await fetch(`${String(uploadTarget).replace(/\/$/, '')}/health`, {
+                method: 'GET',
+                headers: { Accept: 'application/json' }
+            });
+            if (!healthResponse.ok) {
+                throw new Error('Shop upload server is not reachable right now. Wait a moment and try again.');
+            }
+
             const tokenResponse = await fetch(`${API_URL}/auth/client-token`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -659,6 +667,7 @@ function uploadFileToShop({ endpoint, token, file, metadata, onProgress }) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${String(endpoint).replace(/\/$/, '')}/upload`);
+        xhr.timeout = 45000;
         xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
         xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
@@ -682,6 +691,7 @@ function uploadFileToShop({ endpoint, token, file, metadata, onProgress }) {
         };
 
         xhr.onerror = () => reject(new Error('Upload failed. Check the shop tunnel and try again.'));
+        xhr.ontimeout = () => reject(new Error('Upload timed out while connecting to the shop tunnel.'));
         xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
                 resolve();
