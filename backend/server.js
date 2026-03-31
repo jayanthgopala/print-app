@@ -153,6 +153,8 @@ async function handlePublicShopLookup(shopCode, request, env) {
             return json({ error: 'Subscription expired' }, 403, request, env);
         }
 
+        const availability = await resolveShopPcAvailability(shop);
+
         return json({
             shop: {
                 code: shop.shop_code,
