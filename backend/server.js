@@ -1,5 +1,7 @@
 const subscriptionCache = new Map();
 let schemaReadyPromise;
+const PC_HEARTBEAT_TTL_MS = 90 * 1000;
+const PC_HEALTHCHECK_TIMEOUT_MS = 4000;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS shops (
@@ -15,6 +17,7 @@ CREATE TABLE IF NOT EXISTS shops (
     subscription_end TEXT,
     pc_endpoint TEXT,
     pc_status TEXT DEFAULT 'offline',
+    pc_last_seen TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -154,8 +157,8 @@ async function handlePublicShopLookup(shopCode, request, env) {
             shop: {
                 code: shop.shop_code,
                 name: shop.shop_name || shop.name || shop.shop_code,
-                pcEndpoint: shop.pc_status === 'online' ? (shop.pc_endpoint || null) : null,
-                status: shop.pc_status || 'offline',
+                pcEndpoint: availability.status === 'online' ? availability.endpoint : null,
+                status: availability.status,
                 colorPrice: shop.color_price ?? null,
                 bwPrice: shop.bw_price ?? null
             }
@@ -178,12 +181,14 @@ async function handleShopInfo(request, env) {
         if (!shop) {
             return json({ error: 'Shop not found', shop: null }, 404, request, env);
         }
+
+        const availability = await resolveShopPcAvailability(shop);
         return json({
             shop: {
                 code: shop.shop_code,
                 name: shop.shop_name || shop.name || shop.shop_code,
-                pcEndpoint: shop.pc_endpoint || null,
-                status: shop.pc_status || 'offline',
+                pcEndpoint: availability.endpoint,
+                status: availability.status,
                 colorPrice: shop.color_price ?? null,
                 bwPrice: shop.bw_price ?? null
             }
@@ -616,10 +621,22 @@ async function handlePcStatus(request, env) {
     const body = await readJson(request, env);
     if (body.errorResponse) return body.errorResponse;
 
-    const { endpoint, status } = body.data;
+    const normalizedStatus = normalizePcStatus(body.data.status);
+    if (!normalizedStatus) {
+        return json({ error: 'Invalid PC status' }, 400, request, env);
+    }
+
+    let normalizedEndpoint;
+    try {
+        normalizedEndpoint = normalizePcEndpoint(body.data.endpoint);
+    } catch (error) {
+        return json({ error: error.message || 'Invalid endpoint' }, 400, request, env);
+    }
+
     const patch = {};
-    if (endpoint !== undefined) patch.pc_endpoint = endpoint;
-    if (status !== undefined) patch.pc_status = status;
+    patch.pc_status = normalizedStatus;
+    patch.pc_endpoint = normalizedStatus === 'online' ? normalizedEndpoint : null;
+    patch.pc_last_seen = normalizedStatus === 'online' ? new Date().toISOString() : null;
 
     try {
         const clauses = [];
@@ -631,6 +648,10 @@ async function handlePcStatus(request, env) {
         if (patch.pc_status !== undefined) {
             clauses.push('pc_status = ?');
             params.push(patch.pc_status);
+        }
+        if (patch.pc_last_seen !== undefined) {
+            clauses.push('pc_last_seen = ?');
+            params.push(patch.pc_last_seen);
         }
         clauses.push('updated_at = CURRENT_TIMESTAMP');
         params.push(decoded.shopId);
@@ -662,7 +683,7 @@ async function requireAdmin(request, env) {
 async function dbGetShopByCode(env, shopCode) {
     return dbFirst(
         env,
-        'SELECT id, shop_code, shop_name, owner_name, email, phone, password_hash, color_price, bw_price, subscription_end, pc_endpoint, pc_status, created_at, updated_at FROM shops WHERE shop_code = ?',
+        'SELECT id, shop_code, shop_name, owner_name, email, phone, password_hash, color_price, bw_price, subscription_end, pc_endpoint, pc_status, pc_last_seen, created_at, updated_at FROM shops WHERE shop_code = ?',
         shopCode
     );
 }
@@ -708,6 +729,8 @@ async function ensureSchema(env) {
         for (const statement of statements) {
             await env.DB.prepare(statement).run();
         }
+
+        await ensureColumn(env, 'shops', 'pc_last_seen', 'TEXT');
     })().catch((error) => {
         schemaReadyPromise = null;
         throw error;
@@ -802,6 +825,98 @@ function getAllowedOrigins(env) {
 
 function normalizeShopCode(value) {
     return String(value || '').trim().replace(/[<>]/g, '').toUpperCase();
+}
+
+function normalizePcStatus(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return '';
+    if (['online', 'offline', 'starting', 'error'].includes(normalized)) {
+        return normalized;
+    }
+    return '';
+}
+
+function normalizePcEndpoint(value) {
+    if (value === undefined || value === null || String(value).trim() === '') {
+        return null;
+    }
+
+    let parsed;
+    try {
+        parsed = new URL(String(value).trim());
+    } catch {
+        throw new Error('PC endpoint must be a valid URL');
+    }
+
+    if (!['https:', 'http:'].includes(parsed.protocol)) {
+        throw new Error('PC endpoint must use http or https');
+    }
+
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = '';
+    return parsed.toString().replace(/\/+$/, '');
+}
+
+function isFreshPcHeartbeat(isoValue) {
+    if (!isoValue) return false;
+    const timestamp = new Date(isoValue).getTime();
+    if (Number.isNaN(timestamp)) return false;
+    return (Date.now() - timestamp) <= PC_HEARTBEAT_TTL_MS;
+}
+
+async function resolveShopPcAvailability(shop) {
+    const endpoint = normalizeStoredEndpoint(shop.pc_endpoint);
+    if (!endpoint) {
+        return { status: 'offline', endpoint: null };
+    }
+
+    if ((shop.pc_status || '').toLowerCase() !== 'online') {
+        return { status: 'offline', endpoint: null };
+    }
+
+    if (!isFreshPcHeartbeat(shop.pc_last_seen)) {
+        return { status: 'offline', endpoint: null };
+    }
+
+    const healthy = await probePcHealth(endpoint);
+    return healthy
+        ? { status: 'online', endpoint }
+        : { status: 'offline', endpoint: null };
+}
+
+function normalizeStoredEndpoint(value) {
+    try {
+        return normalizePcEndpoint(value);
+    } catch {
+        return null;
+    }
+}
+
+async function probePcHealth(endpoint) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PC_HEALTHCHECK_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(`${endpoint}/health`, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: { Accept: 'application/json' }
+        });
+        return response.ok;
+    } catch {
+        return false;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function ensureColumn(env, tableName, columnName, definition) {
+    const columns = await env.DB.prepare(`PRAGMA table_info(${tableName})`).all();
+    const exists = (columns.results || []).some((column) => column.name === columnName);
+    if (!exists) {
+        await env.DB.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
+    }
 }
 
 async function signJwt(payload, secret) {

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS shops (
     subscription_end TEXT,
     pc_endpoint TEXT,
     pc_status TEXT DEFAULT 'offline',
+    pc_last_seen TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
