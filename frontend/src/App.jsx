@@ -19,6 +19,7 @@ const DEFAULT_PRINT_SETTINGS = {
 export default function App() {
     const transferClientRef = useRef(null);
     const [shopId, setShopId] = useState('');
+    const [connectedShopId, setConnectedShopId] = useState('');
     const [status, setStatus] = useState('DISCONNECTED');
     const [customerName, setCustomerName] = useState('');
     const [files, setFiles] = useState([]);
@@ -66,6 +67,18 @@ export default function App() {
         };
     }, []);
 
+    useEffect(() => {
+        if (!connectedShopId || !API_URL) {
+            return undefined;
+        }
+
+        const interval = window.setInterval(() => {
+            void fetchShopStatus(connectedShopId, { silent: true });
+        }, 15000);
+
+        return () => window.clearInterval(interval);
+    }, [connectedShopId]);
+
     const handleSharedFiles = async () => {
         const params = new URLSearchParams(window.location.search);
         const sharedText = params.get('text');
@@ -109,52 +122,82 @@ export default function App() {
         setInstallPrompt(null);
     };
 
-    const handleConnect = () => {
-        const normalizedShopId = normalizeShopCode(shopId);
+    const fetchShopStatus = async (inputShopId, options = {}) => {
+        const normalizedShopId = normalizeShopCode(inputShopId);
         if (!normalizedShopId) {
             setErrorMessage('Enter a valid shop code before connecting.');
-            return;
+            return false;
         }
 
         if (!API_URL) {
             setErrorMessage('Frontend API is not configured.');
-            return;
+            return false;
         }
 
-        setErrorMessage('');
-        setInfoMessage('Checking shop status...');
-        setIsConnecting(true);
-        setPricing(null);
+        if (!options.silent) {
+            setErrorMessage('');
+            setInfoMessage('Checking shop status...');
+            setIsConnecting(true);
+            setPricing(null);
+        }
         setShopId(normalizedShopId);
 
-        fetch(`${API_URL}/shop/public/${encodeURIComponent(normalizedShopId)}`)
-            .then((r) => r.json())
-            .then((data) => {
-                if (data.shop) {
-                    setPricing(data.shop);
-                    transferClientRef.current = {
-                        shopId: normalizedShopId,
-                        uploadEndpoint: data.shop.pcEndpoint || null
-                    };
-                    if (data.shop.status === 'online' && data.shop.pcEndpoint) {
-                        setStatus('ONLINE');
-                        setErrorMessage('');
-                        setInfoMessage('Shop is online. You can upload files now.');
-                    } else {
-                        setStatus('OFFLINE');
-                        setInfoMessage('');
-                        setErrorMessage('Shop is offline or upload endpoint is not configured right now.');
-                    }
-                } else {
-                    setErrorMessage('Shop details could not be loaded.');
+        try {
+            const response = await fetch(`${API_URL}/shop/public/${encodeURIComponent(normalizedShopId)}`);
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                setConnectedShopId('');
+                transferClientRef.current = null;
+                setStatus('DISCONNECTED');
+                setInfoMessage('');
+                setErrorMessage(data.error || 'Shop details could not be loaded.');
+                return false;
+            }
+
+            if (!data.shop) {
+                setConnectedShopId('');
+                transferClientRef.current = null;
+                setStatus('DISCONNECTED');
+                setInfoMessage('');
+                setErrorMessage('Shop details could not be loaded.');
+                return false;
+            }
+
+            setConnectedShopId(normalizedShopId);
+            setPricing(data.shop);
+            transferClientRef.current = {
+                shopId: normalizedShopId,
+                uploadEndpoint: data.shop.pcEndpoint || null
+            };
+
+            if (data.shop.status === 'online' && data.shop.pcEndpoint) {
+                setStatus('ONLINE');
+                setErrorMessage('');
+                setInfoMessage('Shop is online. You can upload files now.');
+            } else {
+                setStatus('OFFLINE');
+                setInfoMessage('');
+                if (!options.silent || status !== 'OFFLINE') {
+                    setErrorMessage('Shop is offline or upload endpoint is not configured right now.');
                 }
-            })
-            .catch(() => {
+            }
+
+            return true;
+        } catch {
+            if (!options.silent) {
                 setErrorMessage('Could not load shop pricing.');
-            })
-            .finally(() => {
+            }
+            return false;
+        } finally {
+            if (!options.silent) {
                 setIsConnecting(false);
-            });
+            }
+        }
+    };
+
+    const handleConnect = () => {
+        void fetchShopStatus(shopId);
     };
 
     const appendFiles = (selectedFiles) => {

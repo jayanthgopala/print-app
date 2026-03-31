@@ -668,32 +668,40 @@ ipcMain.handle('start-service', async () => {
         return { success: false, message: error.message };
     }
 
+    // Start local upload server before creating or publishing any public endpoint.
+    try {
+        await startUploadServer(shopId, uploadPort);
+    } catch (error) {
+        if (tunnelManager) {
+            tunnelManager.stop();
+        }
+        return { success: false, message: `Upload server failed to start: ${error.message}` };
+    }
+
     // Check if manual URL is configured (backwards compatibility)
     const manualUrl = store.get('uploadPublicUrl', process.env.UPLOAD_PUBLIC_URL || '');
     let uploadPublicUrl = null;
-    
+
     if (manualUrl && manualUrl.trim()) {
-        // Use manual URL if provided
         try {
             uploadPublicUrl = normalizePublicUploadUrl(manualUrl);
             log('Using manual tunnel URL:', uploadPublicUrl);
         } catch (error) {
+            stopUploadServer();
             return { success: false, message: `Invalid upload URL: ${error.message}` };
         }
     } else {
-        // Auto-start tunnel (production mode)
         log('Starting automatic tunnel...');
-        
-        // Check if cloudflared is installed
+
         const installed = await TunnelManager.checkInstalled();
         if (!installed.installed) {
+            stopUploadServer();
             return {
                 success: false,
                 message: 'Cloudflared not installed. Please install cloudflared from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/'
             };
         }
 
-        // Initialize tunnel manager if not already created
         if (!tunnelManager) {
             tunnelManager = new TunnelManager({
                 port: uploadPort,
@@ -714,31 +722,22 @@ ipcMain.handle('start-service', async () => {
             });
         }
 
-        // Start tunnel
         try {
             const tunnelResult = await tunnelManager.start();
             if (!tunnelResult.success) {
+                stopUploadServer();
                 return { success: false, message: 'Failed to start tunnel' };
             }
             uploadPublicUrl = tunnelResult.url;
             log('Tunnel started successfully:', uploadPublicUrl);
         } catch (error) {
             log('Tunnel start error:', error);
+            stopUploadServer();
             return {
                 success: false,
                 message: `Failed to start tunnel: ${error.message}`
             };
         }
-    }
-
-    // Start local upload server before publishing any public endpoint.
-    try {
-        await startUploadServer(shopId, uploadPort);
-    } catch (error) {
-        if (tunnelManager) {
-            tunnelManager.stop();
-        }
-        return { success: false, message: `Upload server failed to start: ${error.message}` };
     }
 
     const publishedStatus = await publishPcOnlineStatus(shopId, uploadPublicUrl);
