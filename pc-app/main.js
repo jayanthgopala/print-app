@@ -11,9 +11,6 @@ const TunnelManager = require('./tunnel-manager');
 const APP_ID = 'com.jayanthgopala.printshop.pcapp';
 const APP_DATA_DIR_NAME = 'Print Shop Manager';
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
-const PUBLIC_HEALTHCHECK_TIMEOUT_MS = 8000;
-const PUBLIC_HEALTHCHECK_ATTEMPTS = 20;
-const PUBLIC_HEALTHCHECK_RETRY_DELAY_MS = 3000;
 const PUBLIC_HEARTBEAT_INTERVAL_MS = 30000;
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']);
 const ALLOWED_MIME_TYPES = new Set([
@@ -132,75 +129,17 @@ async function updatePcStatus(status, endpoint = undefined) {
     }
 }
 
-function wait(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function verifyPublicUploadUrl(uploadPublicUrl, expectedShopId) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), PUBLIC_HEALTHCHECK_TIMEOUT_MS);
-
-    try {
-        const response = await fetch(`${String(uploadPublicUrl).replace(/\/$/, '')}/health`, {
-            method: 'GET',
-            headers: {
-                Accept: 'application/json'
-            },
-            signal: controller.signal
-        });
-
-        if (!response.ok) {
-            return { ok: false, message: `Health check returned ${response.status}` };
-        }
-
-        const payload = await response.json().catch(() => ({}));
-        if (payload.status !== 'ok') {
-            return { ok: false, message: 'Health check payload invalid' };
-        }
-        if (expectedShopId && normalizeShopCode(payload.shopId) !== normalizeShopCode(expectedShopId)) {
-            return { ok: false, message: 'Health check shop mismatch' };
-        }
-
-        return { ok: true };
-    } catch (error) {
-        return { ok: false, message: error.message || 'Health check failed' };
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
-async function waitForPublicEndpoint(uploadPublicUrl, expectedShopId, attempts = PUBLIC_HEALTHCHECK_ATTEMPTS) {
+async function publishPcOnlineStatus(uploadPublicUrl) {
     if (!uploadPublicUrl) {
-        return { ok: false, message: 'Tunnel URL was not detected' };
-    }
-
-    let lastResult = { ok: false, message: 'Health check not started' };
-
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        lastResult = await verifyPublicUploadUrl(uploadPublicUrl, expectedShopId);
-        if (lastResult.ok) {
-            return lastResult;
-        }
-
-        log(`Public endpoint health check failed (${attempt}/${attempts}):`, lastResult.message);
-        if (attempt < attempts) {
-            await wait(PUBLIC_HEALTHCHECK_RETRY_DELAY_MS);
-        }
-    }
-
-    return lastResult;
-}
-
-async function publishPcOnlineStatus(shopId, uploadPublicUrl) {
-    const health = await waitForPublicEndpoint(uploadPublicUrl, shopId);
-    if (!health.ok) {
-        await updatePcStatus('offline', null);
         currentUploadPublicUrl = null;
-        return { success: false, message: health.message || 'Public endpoint health check failed' };
+        return { success: false, message: 'Tunnel URL was not detected' };
     }
 
     currentUploadPublicUrl = String(uploadPublicUrl).replace(/\/$/, '');
     await updatePcStatus('online', currentUploadPublicUrl);
+    if (mainWindow) {
+        mainWindow.webContents.send('tunnel-status', { status: 'online', url: currentUploadPublicUrl });
+    }
     return { success: true, uploadPublicUrl: currentUploadPublicUrl };
 }
 
@@ -803,13 +742,9 @@ ipcMain.handle('start-service', async () => {
         }
     }
 
-    const publishedStatus = await publishPcOnlineStatus(shopId, uploadPublicUrl);
+    const publishedStatus = await publishPcOnlineStatus(uploadPublicUrl);
     if (!publishedStatus.success) {
-        if (tunnelManager) {
-            tunnelManager.stop();
-        }
-        stopUploadServer();
-        return { success: false, message: `Public upload endpoint is not reachable: ${publishedStatus.message}` };
+        await updatePcStatus('starting', null);
     }
 
     // Setup heartbeat
@@ -823,14 +758,10 @@ ipcMain.handle('start-service', async () => {
             return;
         }
 
-        const heartbeatResult = await verifyPublicUploadUrl(currentUrl, shopId);
-        if (heartbeatResult.ok) {
-            currentUploadPublicUrl = String(currentUrl).replace(/\/$/, '');
-            await updatePcStatus('online', currentUploadPublicUrl);
-        } else {
-            log('Heartbeat health check failed:', heartbeatResult.message);
-            currentUploadPublicUrl = null;
-            await updatePcStatus('offline', null);
+        currentUploadPublicUrl = String(currentUrl).replace(/\/$/, '');
+        await updatePcStatus('online', currentUploadPublicUrl);
+        if (mainWindow) {
+            mainWindow.webContents.send('tunnel-status', { status: 'online', url: currentUploadPublicUrl });
         }
     }, PUBLIC_HEARTBEAT_INTERVAL_MS);
 
@@ -840,10 +771,14 @@ ipcMain.handle('start-service', async () => {
             shopId,
             token,
             downloadPath,
-            uploadPublicUrl: currentUploadPublicUrl,
+            uploadPublicUrl: String(uploadPublicUrl || '').replace(/\/$/, ''),
             uploadPort,
-            autoTunnel: !manualUrl
-        }
+            autoTunnel: !manualUrl,
+            status: publishedStatus.success ? 'online' : 'starting'
+        },
+        message: publishedStatus.success
+            ? 'Service is online.'
+            : `Tunnel created but URL was not detected cleanly: ${publishedStatus.message}`
     };
 });
 

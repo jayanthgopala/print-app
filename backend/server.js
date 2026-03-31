@@ -879,10 +879,7 @@ async function resolveShopPcAvailability(shop) {
         return { status: 'offline', endpoint: null };
     }
 
-    const healthy = await probePcHealth(endpoint);
-    return healthy
-        ? { status: 'online', endpoint }
-        : { status: 'offline', endpoint: null };
+    return { status: 'online', endpoint };
 }
 
 function normalizeStoredEndpoint(value) {

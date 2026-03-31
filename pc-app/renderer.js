@@ -20,10 +20,16 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (data.status === 'url-detected' && data.url) {
             showMessage(`Tunnel created. Verifying public health: ${data.url}`, 'info', 5000);
         } else if (data.status === 'starting') {
+            document.getElementById('statusBadge').textContent = 'Starting';
+            document.getElementById('statusBadge').className = 'status offline';
             showMessage('Starting tunnel...', 'info', 3000);
         } else if (data.status === 'offline') {
+            document.getElementById('statusBadge').textContent = 'Offline';
+            document.getElementById('statusBadge').className = 'status offline';
             showMessage('Tunnel is offline.', 'error');
         } else if (data.status === 'error') {
+            document.getElementById('statusBadge').textContent = 'Offline';
+            document.getElementById('statusBadge').className = 'status offline';
             showMessage(`Tunnel error: ${data.error}`, 'error');
         }
     });
@@ -180,11 +186,20 @@ async function saveAndStart() {
     const result = await window.electronAPI.startService();
     if (result.success) {
         clearMessage();
-        document.getElementById('statusBadge').textContent = 'Online';
-        document.getElementById('statusBadge').className = 'status online';
+        if (result.config && result.config.status === 'starting') {
+            document.getElementById('statusBadge').textContent = 'Starting';
+            document.getElementById('statusBadge').className = 'status offline';
+        } else {
+            document.getElementById('statusBadge').textContent = 'Online';
+            document.getElementById('statusBadge').className = 'status online';
+        }
         
         const autoTunnelNote = result.config && result.config.autoTunnel ? ' (Auto-tunnel active)' : '';
-        showMessage(`Service is online${autoTunnelNote}. Customers should upload only through the frontend.`, 'success');
+        if (result.config && result.config.status === 'starting') {
+            showMessage(`${result.message || 'Tunnel is starting'}${autoTunnelNote}`, 'info');
+        } else {
+            showMessage(`Service is online${autoTunnelNote}. Customers should upload only through the frontend.`, 'success');
+        }
         
         if (result.config && result.config.uploadPublicUrl) {
             showMessage(`Tunnel URL: ${result.config.uploadPublicUrl}`, 'info');
