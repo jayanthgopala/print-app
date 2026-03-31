@@ -21,10 +21,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Listen for tunnel status updates
     window.electronAPI.onTunnelStatus((data) => {
         console.log('Tunnel status:', data);
-        if (data.status === 'online' && data.url) {
-            showMessage(`Tunnel connected: ${data.url}`, 'success', 5000);
+        if (data.status === 'url-detected' && data.url) {
+            showMessage(`Tunnel created. Verifying public health: ${data.url}`, 'info', 5000);
         } else if (data.status === 'starting') {
             showMessage('Starting tunnel...', 'info', 3000);
+        } else if (data.status === 'offline') {
+            showMessage('Tunnel is offline.', 'error');
         } else if (data.status === 'error') {
             showMessage(`Tunnel error: ${data.error}`, 'error');
         }

@@ -10,6 +10,9 @@ const TunnelManager = require('./tunnel-manager');
 const APP_ID = 'com.jayanthgopala.printshop.pcapp';
 const APP_DATA_DIR_NAME = 'Print Shop Manager';
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+const PUBLIC_HEALTHCHECK_TIMEOUT_MS = 5000;
+const PUBLIC_HEALTHCHECK_ATTEMPTS = 8;
+const PUBLIC_HEARTBEAT_INTERVAL_MS = 30000;
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']);
 const ALLOWED_MIME_TYPES = new Set([
     'application/pdf',
@@ -29,6 +32,7 @@ let uploadServer = null;
 let uploadServerPort = null;
 let heartbeatTimer = null;
 let tunnelManager = null;
+let currentUploadPublicUrl = null;
 
 // Default to the deployed Worker backend; env vars can still override this.
 const DEFAULT_API_URL = 'https://print-app-backend.jayanthgopala21.workers.dev';
@@ -124,6 +128,74 @@ async function updatePcStatus(status, endpoint = undefined) {
     } catch (error) {
         log('PC status update failed:', formatError(error));
     }
+}
+
+function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function verifyPublicUploadUrl(uploadPublicUrl, expectedShopId) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PUBLIC_HEALTHCHECK_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(`${String(uploadPublicUrl).replace(/\/$/, '')}/health`, {
+            method: 'GET',
+            headers: {
+                Accept: 'application/json'
+            },
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            return { ok: false, message: `Health check returned ${response.status}` };
+        }
+
+        const payload = await response.json().catch(() => ({}));
+        if (payload.status !== 'ok') {
+            return { ok: false, message: 'Health check payload invalid' };
+        }
+        if (expectedShopId && normalizeShopCode(payload.shopId) !== normalizeShopCode(expectedShopId)) {
+            return { ok: false, message: 'Health check shop mismatch' };
+        }
+
+        return { ok: true };
+    } catch (error) {
+        return { ok: false, message: error.message || 'Health check failed' };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function waitForPublicEndpoint(uploadPublicUrl, expectedShopId, attempts = PUBLIC_HEALTHCHECK_ATTEMPTS) {
+    let lastResult = { ok: false, message: 'Health check not started' };
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        lastResult = await verifyPublicUploadUrl(uploadPublicUrl, expectedShopId);
+        if (lastResult.ok) {
+            return lastResult;
+        }
+
+        log(`Public endpoint health check failed (${attempt}/${attempts}):`, lastResult.message);
+        if (attempt < attempts) {
+            await wait(1500);
+        }
+    }
+
+    return lastResult;
+}
+
+async function publishPcOnlineStatus(shopId, uploadPublicUrl) {
+    const health = await waitForPublicEndpoint(uploadPublicUrl, shopId);
+    if (!health.ok) {
+        await updatePcStatus('offline', null);
+        currentUploadPublicUrl = null;
+        return { success: false, message: health.message || 'Public endpoint health check failed' };
+    }
+
+    currentUploadPublicUrl = String(uploadPublicUrl).replace(/\/$/, '');
+    await updatePcStatus('online', currentUploadPublicUrl);
+    return { success: true, uploadPublicUrl: currentUploadPublicUrl };
 }
 
 async function verifyClientUploadToken(token) {
@@ -356,6 +428,7 @@ function stopUploadServer() {
         uploadServer = null;
         uploadServerPort = null;
     }
+    currentUploadPublicUrl = null;
 }
 
 function createWindow() {
@@ -627,14 +700,16 @@ ipcMain.handle('start-service', async () => {
                 logPath: path.join(__dirname, 'tunnel.log'),
                 onStatusChange: (status, url, error) => {
                     log('Tunnel status changed:', status, url, error);
+                    if (status === 'offline' || status === 'error') {
+                        currentUploadPublicUrl = null;
+                        void updatePcStatus('offline', null);
+                    }
                     if (mainWindow) {
                         mainWindow.webContents.send('tunnel-status', { status, url, error });
                     }
                 },
                 onUrlDetected: async (url) => {
                     log('Tunnel URL detected:', url);
-                    // Auto-update backend with new tunnel URL
-                    await updatePcStatus('online', url);
                 }
             });
         }
@@ -656,7 +731,7 @@ ipcMain.handle('start-service', async () => {
         }
     }
 
-    // Start local upload server
+    // Start local upload server before publishing any public endpoint.
     try {
         await startUploadServer(shopId, uploadPort);
     } catch (error) {
@@ -666,17 +741,36 @@ ipcMain.handle('start-service', async () => {
         return { success: false, message: `Upload server failed to start: ${error.message}` };
     }
 
-    // Update backend status
-    await updatePcStatus('online', uploadPublicUrl || null);
-    
+    const publishedStatus = await publishPcOnlineStatus(shopId, uploadPublicUrl);
+    if (!publishedStatus.success) {
+        if (tunnelManager) {
+            tunnelManager.stop();
+        }
+        stopUploadServer();
+        return { success: false, message: `Public upload endpoint is not reachable: ${publishedStatus.message}` };
+    }
+
     // Setup heartbeat
     if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
     }
-    heartbeatTimer = setInterval(() => {
-        const currentUrl = tunnelManager ? tunnelManager.getUrl() : uploadPublicUrl;
-        void updatePcStatus('online', currentUrl || null);
-    }, 30000);
+    heartbeatTimer = setInterval(async () => {
+        const currentUrl = tunnelManager ? tunnelManager.getUrl() : currentUploadPublicUrl;
+        if (!currentUrl) {
+            await updatePcStatus('offline', null);
+            return;
+        }
+
+        const heartbeatResult = await verifyPublicUploadUrl(currentUrl, shopId);
+        if (heartbeatResult.ok) {
+            currentUploadPublicUrl = String(currentUrl).replace(/\/$/, '');
+            await updatePcStatus('online', currentUploadPublicUrl);
+        } else {
+            log('Heartbeat health check failed:', heartbeatResult.message);
+            currentUploadPublicUrl = null;
+            await updatePcStatus('offline', null);
+        }
+    }, PUBLIC_HEARTBEAT_INTERVAL_MS);
 
     return {
         success: true,
@@ -684,7 +778,7 @@ ipcMain.handle('start-service', async () => {
             shopId,
             token,
             downloadPath,
-            uploadPublicUrl,
+            uploadPublicUrl: currentUploadPublicUrl,
             uploadPort,
             autoTunnel: !manualUrl
         }
