@@ -2,6 +2,10 @@ name = "print-app-backend"
 main = "server.js"
 compatibility_date = "2026-03-11"
 
+[[migrations]]
+tag = "v1-delete-signaling-room"
+deleted_classes = ["SignalingRoom"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "print_app"
