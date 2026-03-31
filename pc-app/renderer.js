@@ -13,10 +13,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     const pwdEl = document.getElementById('shopPassword');
     if (pwdEl) pwdEl.value = settings.password || '';
     document.getElementById('downloadPath').value = settings.downloadPath || '';
-    const uploadPublicUrlEl = document.getElementById('uploadPublicUrl');
-    if (uploadPublicUrlEl) uploadPublicUrlEl.value = settings.uploadPublicUrl || '';
-    const uploadPortEl = document.getElementById('uploadPort');
-    if (uploadPortEl) uploadPortEl.value = settings.uploadPort || 8788;
     
     // Listen for tunnel status updates
     window.electronAPI.onTunnelStatus((data) => {
@@ -147,9 +143,7 @@ async function saveAndStart() {
         colorPrice: parseFloat(document.getElementById('colorPrice').value),
         bwPrice: parseFloat(document.getElementById('bwPrice').value),
         colorPrinter: document.getElementById('colorPrinter').value,
-        bwPrinter: document.getElementById('bwPrinter').value,
-        uploadPublicUrl: document.getElementById('uploadPublicUrl') ? document.getElementById('uploadPublicUrl').value : '',
-        uploadPort: document.getElementById('uploadPort') ? document.getElementById('uploadPort').value : '8788'
+        bwPrinter: document.getElementById('bwPrinter').value
     };
 
     // Require a shop code and password before proceeding to save/start
