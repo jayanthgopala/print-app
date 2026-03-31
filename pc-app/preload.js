@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSettings: () => ipcRenderer.invoke('get-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
     selectFolder: () => ipcRenderer.invoke('select-folder'),
+    installCloudflared: () => ipcRenderer.invoke('install-cloudflared'),
     generateQR: (shopId) => ipcRenderer.invoke('generate-qr', shopId),
     printQR: (payload) => ipcRenderer.invoke('print-qr', payload),
     startService: () => ipcRenderer.invoke('start-service'),

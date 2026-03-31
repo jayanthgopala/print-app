@@ -17,6 +17,12 @@
     "directories": {
       "output": "release-dist"
     },
+    "extraResources": [
+      {
+        "from": "../INSTALLER",
+        "to": "INSTALLER"
+      }
+    ],
     "files": [
       "index.html",
       "main.js",

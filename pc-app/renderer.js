@@ -192,7 +192,29 @@ async function saveAndStart() {
     } else {
         document.getElementById('statusBadge').textContent = 'Offline';
         document.getElementById('statusBadge').className = 'status offline';
-        showMessage('Error: ' + result.message, 'error');
+        const message = String(result.message || '');
+        if (message.toLowerCase().includes('cloudflared not installed')) {
+            showMessage('Tunnel service is missing. Click "Install Tunnel Service", approve the Windows admin prompt, then start the service again.', 'error');
+        } else {
+            showMessage('Error: ' + result.message, 'error');
+        }
+    }
+}
+
+async function installCloudflared() {
+    try {
+        const result = await window.electronAPI.installCloudflared();
+        if (result.success) {
+            if (result.method === 'winget') {
+                showMessage('Official Cloudflared install launched via Windows Package Manager. Approve the admin prompt, finish installation, then click "Save and Start Service" again.', 'info');
+            } else {
+                showMessage('Cloudflared installer launched. Approve the admin prompt, finish installation, then click "Save and Start Service" again.', 'info');
+            }
+        } else {
+            showMessage('Could not launch Cloudflared installer: ' + result.message, 'error');
+        }
+    } catch (error) {
+        showMessage('Could not launch Cloudflared installer: ' + error.message, 'error');
     }
 }
 

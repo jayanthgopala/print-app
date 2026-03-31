@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -10,8 +11,9 @@ const TunnelManager = require('./tunnel-manager');
 const APP_ID = 'com.jayanthgopala.printshop.pcapp';
 const APP_DATA_DIR_NAME = 'Print Shop Manager';
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
-const PUBLIC_HEALTHCHECK_TIMEOUT_MS = 5000;
-const PUBLIC_HEALTHCHECK_ATTEMPTS = 8;
+const PUBLIC_HEALTHCHECK_TIMEOUT_MS = 8000;
+const PUBLIC_HEALTHCHECK_ATTEMPTS = 20;
+const PUBLIC_HEALTHCHECK_RETRY_DELAY_MS = 3000;
 const PUBLIC_HEARTBEAT_INTERVAL_MS = 30000;
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']);
 const ALLOWED_MIME_TYPES = new Set([
@@ -168,6 +170,10 @@ async function verifyPublicUploadUrl(uploadPublicUrl, expectedShopId) {
 }
 
 async function waitForPublicEndpoint(uploadPublicUrl, expectedShopId, attempts = PUBLIC_HEALTHCHECK_ATTEMPTS) {
+    if (!uploadPublicUrl) {
+        return { ok: false, message: 'Tunnel URL was not detected' };
+    }
+
     let lastResult = { ok: false, message: 'Health check not started' };
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -178,7 +184,7 @@ async function waitForPublicEndpoint(uploadPublicUrl, expectedShopId, attempts =
 
         log(`Public endpoint health check failed (${attempt}/${attempts}):`, lastResult.message);
         if (attempt < attempts) {
-            await wait(1500);
+            await wait(PUBLIC_HEALTHCHECK_RETRY_DELAY_MS);
         }
     }
 
@@ -466,6 +472,60 @@ function getAppIconPath() {
     return path.join(__dirname, 'assets', iconFile);
 }
 
+function getInstallerScriptPath() {
+    const candidatePaths = [
+        path.join(process.resourcesPath || '', 'INSTALLER', 'install-cloudflared.bat'),
+        path.join(__dirname, '..', 'INSTALLER', 'install-cloudflared.bat'),
+        path.join(process.cwd(), 'INSTALLER', 'install-cloudflared.bat')
+    ];
+
+    return candidatePaths.find((candidate) => candidate && fs.existsSync(candidate)) || '';
+}
+
+async function launchCloudflaredInstaller() {
+    if (process.platform !== 'win32') {
+        return { success: false, message: 'Cloudflared installer is only configured for Windows in this app.' };
+    }
+
+    return new Promise((resolve) => {
+        const wingetCommand = "Start-Process -Verb RunAs -FilePath 'winget.exe' -ArgumentList 'install','--id','Cloudflare.cloudflared','--exact','--source','winget'";
+        const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', wingetCommand], {
+            detached: true,
+            stdio: 'ignore'
+        });
+
+        child.on('error', (error) => {
+            const installerPath = getInstallerScriptPath();
+            if (!installerPath) {
+                resolve({ success: false, message: error.message || 'Failed to launch installer' });
+                return;
+            }
+
+            const fallbackCommand = `Start-Process -FilePath '${installerPath.replace(/'/g, "''")}' -Verb RunAs`;
+            const fallback = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', fallbackCommand], {
+                detached: true,
+                stdio: 'ignore'
+            });
+
+            fallback.on('error', (fallbackError) => {
+                resolve({ success: false, message: fallbackError.message || error.message || 'Failed to launch installer' });
+            });
+
+            fallback.unref();
+            resolve({
+                success: true,
+                method: 'script-fallback'
+            });
+        });
+
+        child.unref();
+        resolve({
+            success: true,
+            method: 'winget'
+        });
+    });
+}
+
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
@@ -628,6 +688,9 @@ ipcMain.handle('select-folder', async () => {
         properties: ['openDirectory']
     });
     return result.canceled ? null : result.filePaths[0];
+});
+ipcMain.handle('install-cloudflared', async () => {
+    return launchCloudflaredInstaller();
 });
 ipcMain.handle('get-printers', async () => {
     try {

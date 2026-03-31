@@ -32,13 +32,19 @@ class TunnelManager {
         this.isShuttingDown = false;
         this.restartAttempts = 0;
 
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             try {
+                const cloudflaredBinary = await TunnelManager.resolveBinaryPath();
+                if (!cloudflaredBinary) {
+                    reject(new Error('Cloudflared executable not found'));
+                    return;
+                }
+
                 console.log(`Starting cloudflared tunnel on port ${this.port}...`);
                 this.statusCallback('starting');
 
                 // Spawn cloudflared process
-                this.tunnelProcess = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${this.port}`], {
+                this.tunnelProcess = spawn(cloudflaredBinary, ['tunnel', '--url', `http://localhost:${this.port}`], {
                     detached: false,
                     stdio: ['ignore', 'pipe', 'pipe']
                 });
@@ -58,10 +64,10 @@ class TunnelManager {
                     this.appendLog(output);
 
                     // Look for tunnel URL
-                    const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-                    if (urlMatch && !this.tunnelUrl) {
+                    const detectedUrl = TunnelManager.extractTunnelUrl(output);
+                    if (detectedUrl && !this.tunnelUrl) {
                         clearTimeout(timeout);
-                        this.tunnelUrl = urlMatch[0];
+                        this.tunnelUrl = detectedUrl;
                         console.log(`Tunnel URL detected: ${this.tunnelUrl}`);
                         this.statusCallback('url-detected', this.tunnelUrl);
                         this.urlCallback(this.tunnelUrl);
@@ -75,10 +81,10 @@ class TunnelManager {
                     this.appendLog(`[ERROR] ${output}`);
                     
                     // Also check stderr for URL (cloudflared sometimes outputs there)
-                    const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-                    if (urlMatch && !this.tunnelUrl) {
+                    const detectedUrl = TunnelManager.extractTunnelUrl(output);
+                    if (detectedUrl && !this.tunnelUrl) {
                         clearTimeout(timeout);
-                        this.tunnelUrl = urlMatch[0];
+                        this.tunnelUrl = detectedUrl;
                         console.log(`Tunnel URL detected: ${this.tunnelUrl}`);
                         this.statusCallback('url-detected', this.tunnelUrl);
                         this.urlCallback(this.tunnelUrl);
@@ -176,8 +182,13 @@ class TunnelManager {
      * Check if cloudflared is installed
      */
     static async checkInstalled() {
+        const binaryPath = await TunnelManager.resolveBinaryPath();
+        if (!binaryPath) {
+            return { installed: false };
+        }
+
         return new Promise((resolve) => {
-            const check = spawn('cloudflared', ['--version'], { stdio: 'pipe' });
+            const check = spawn(binaryPath, ['--version'], { stdio: 'pipe' });
             
             let output = '';
             check.stdout.on('data', (data) => {
@@ -185,8 +196,8 @@ class TunnelManager {
             });
             
             check.on('exit', (code) => {
-                if (code === 0 && output.includes('cloudflared')) {
-                    resolve({ installed: true, version: output.trim() });
+                if (code === 0) {
+                    resolve({ installed: true, version: output.trim(), path: binaryPath });
                 } else {
                     resolve({ installed: false });
                 }
@@ -196,6 +207,59 @@ class TunnelManager {
                 resolve({ installed: false });
             });
         });
+    }
+
+    static async resolveBinaryPath() {
+        const candidates = [
+            process.env.CLOUDFLARED_PATH,
+            path.join(process.env.ProgramFiles || '', 'cloudflared', 'cloudflared.exe'),
+            path.join(process.env['ProgramFiles(x86)'] || '', 'cloudflared', 'cloudflared.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages', 'Cloudflare.cloudflared_8wekyb3d8bbwe', 'cloudflared.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps', 'cloudflared.exe'),
+            path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Microsoft', 'WindowsApps', 'cloudflared.exe'),
+            path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cloudflared.exe')
+        ].filter(Boolean);
+
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
+        }
+
+        const discovered = await TunnelManager.findBinaryWithWhere();
+        return discovered || '';
+    }
+
+    static async findBinaryWithWhere() {
+        return new Promise((resolve) => {
+            const lookup = spawn('where.exe', ['cloudflared'], { stdio: ['ignore', 'pipe', 'ignore'] });
+            let output = '';
+
+            lookup.stdout.on('data', (data) => {
+                output += data.toString();
+            });
+
+            lookup.on('exit', (code) => {
+                if (code !== 0) {
+                    resolve('');
+                    return;
+                }
+
+                const match = output
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .find((line) => line.toLowerCase().endsWith('cloudflared.exe') && fs.existsSync(line));
+
+                resolve(match || '');
+            });
+
+            lookup.on('error', () => resolve(''));
+        });
+    }
+
+    static extractTunnelUrl(output) {
+        const match = String(output || '').match(/https:\/\/[^\s"']*?\.trycloudflare\.com/i);
+        return match ? match[0].replace(/\/+$/, '') : '';
     }
 
     /**
