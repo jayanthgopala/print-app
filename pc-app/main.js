@@ -711,6 +711,7 @@ ipcMain.handle('start-service', async () => {
         if (!tunnelManager) {
             tunnelManager = new TunnelManager({
                 port: uploadPort,
+                host: '127.0.0.1',
                 logPath: path.join(__dirname, 'tunnel.log'),
                 onStatusChange: (status, url, error) => {
                     log('Tunnel status changed:', status, url, error);

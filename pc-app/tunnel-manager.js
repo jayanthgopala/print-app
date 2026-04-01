@@ -10,6 +10,7 @@ const path = require('path');
 class TunnelManager {
     constructor(options = {}) {
         this.port = options.port || 8788;
+        this.host = options.host || '127.0.0.1';
         this.logPath = options.logPath || path.join(__dirname, 'tunnel.log');
         this.tunnelProcess = null;
         this.tunnelUrl = null;
@@ -40,11 +41,13 @@ class TunnelManager {
                     return;
                 }
 
-                console.log(`Starting cloudflared tunnel on port ${this.port}...`);
+                const targetUrl = `http://${this.host}:${this.port}`;
+                console.log(`Starting cloudflared tunnel for ${targetUrl}...`);
+                this.appendLog(`Starting cloudflared tunnel for ${targetUrl}`);
                 this.statusCallback('starting');
 
                 // Spawn cloudflared process
-                this.tunnelProcess = spawn(cloudflaredBinary, ['tunnel', '--url', `http://localhost:${this.port}`], {
+                this.tunnelProcess = spawn(cloudflaredBinary, ['tunnel', '--url', targetUrl], {
                     detached: false,
                     stdio: ['ignore', 'pipe', 'pipe']
                 });
