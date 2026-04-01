@@ -221,7 +221,7 @@ function deriveManagedTunnelUrl(shopId) {
         );
     }
 
-    const baseDomain = String(process.env.UPLOAD_PUBLIC_BASE_DOMAIN || 'everyshop.in')
+    const baseDomain = String(process.env.UPLOAD_PUBLIC_BASE_DOMAIN || 'buildergrids.tech')
         .trim()
         .replace(/^https?:\/\//i, '')
         .replace(/\/+$/, '');
