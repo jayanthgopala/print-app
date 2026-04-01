@@ -33,8 +33,8 @@ let heartbeatTimer = null;
 let tunnelManager = null;
 let currentUploadPublicUrl = null;
 
-// Default to the deployed Worker backend; env vars can still override this.
-const DEFAULT_API_URL = 'https://print-app-backend.jayanthgopala21.workers.dev';
+// Default to the live backend domain; env vars can still override this.
+const DEFAULT_API_URL = 'https://backend.buildergrids.tech';
 const API_URL = process.env.API_URL || DEFAULT_API_URL;
 log('PC app backend config:', { API_URL });
 
@@ -194,6 +194,43 @@ function parseUploadPort(value) {
     }
 
     return port;
+}
+
+function normalizeHostnameLabel(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+}
+
+function deriveManagedTunnelUrl(shopId) {
+    const normalizedShopId = normalizeHostnameLabel(shopId);
+    if (!normalizedShopId) {
+        return '';
+    }
+
+    const configuredTemplate = String(process.env.UPLOAD_PUBLIC_URL_TEMPLATE || '').trim();
+    if (configuredTemplate) {
+        return normalizePublicUploadUrl(
+            configuredTemplate
+                .replace(/\{shop\}/gi, normalizedShopId)
+                .replace(/\{shopId\}/g, normalizedShopId)
+                .replace(/\{SHOP_ID\}/g, normalizedShopId)
+        );
+    }
+
+    const baseDomain = String(process.env.UPLOAD_PUBLIC_BASE_DOMAIN || 'everyshop.in')
+        .trim()
+        .replace(/^https?:\/\//i, '')
+        .replace(/\/+$/, '');
+
+    if (!baseDomain) {
+        return '';
+    }
+
+    return normalizePublicUploadUrl(`https://${normalizedShopId}.${baseDomain}`);
 }
 
 function validateIncomingUpload({ fileName, fileType, declaredSize, copies, fileIndex, totalFiles }) {
@@ -516,8 +553,7 @@ ipcMain.handle('save-settings', async (event, settings) => {
     if (password) store.set('password', password);
     store.set('colorPrinter', settings.colorPrinter || '');
     store.set('bwPrinter', settings.bwPrinter || '');
-    store.set('uploadPublicUrl', settings.uploadPublicUrl || process.env.UPLOAD_PUBLIC_URL || '');
-    store.set('uploadPort', Number(settings.uploadPort || process.env.UPLOAD_PORT || 8788));
+    store.set('uploadPort', Number(process.env.UPLOAD_PORT || 8788));
 
     try {
         if (!/^https?:\/\//i.test(API_URL)) {
@@ -684,11 +720,14 @@ ipcMain.handle('start-service', async () => {
         return { success: false, message: `Upload server failed to start: ${error.message}` };
     }
 
-    // Check if manual URL is configured (backwards compatibility)
+    const managedUrl = deriveManagedTunnelUrl(shopId);
     const manualUrl = store.get('uploadPublicUrl', process.env.UPLOAD_PUBLIC_URL || '');
     let uploadPublicUrl = null;
 
-    if (manualUrl && manualUrl.trim()) {
+    if (managedUrl) {
+        uploadPublicUrl = managedUrl;
+        log('Using managed tunnel URL for shop:', { shopId, uploadPublicUrl });
+    } else if (manualUrl && manualUrl.trim()) {
         try {
             uploadPublicUrl = normalizePublicUploadUrl(manualUrl);
             log('Using manual tunnel URL:', uploadPublicUrl);
@@ -778,7 +817,7 @@ ipcMain.handle('start-service', async () => {
             downloadPath,
             uploadPublicUrl: String(uploadPublicUrl || '').replace(/\/$/, ''),
             uploadPort,
-            autoTunnel: !manualUrl,
+            autoTunnel: !managedUrl && !manualUrl,
             status: publishedStatus.success ? 'online' : 'starting'
         },
         message: publishedStatus.success

@@ -1,5 +1,5 @@
-const BASE = import.meta.env.VITE_API_URL
-if (!BASE) throw new Error('VITE_API_URL is not set. Set your backend URL in the frontend-admin build environment.');
+const DEFAULT_API_URL = 'https://backend.buildergrids.tech';
+const BASE = (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(/\/$/, '');
 
 export async function apiPost(path, body, token){
   const headers = { 'Content-Type': 'application/json' }

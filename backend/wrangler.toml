@@ -2,6 +2,10 @@ name = "print-app-backend"
 main = "server.js"
 compatibility_date = "2026-03-11"
 
+[vars]
+FRONTEND_URL = "https://buildergrids.tech"
+ALLOWED_ORIGINS = "https://buildergrids.tech"
+
 [[migrations]]
 tag = "v1-delete-signaling-room"
 deleted_classes = ["SignalingRoom"]

@@ -198,7 +198,10 @@ async function saveAndStart() {
         if (result.config && result.config.status === 'starting') {
             showMessage(`${result.message || 'Tunnel is starting'}${autoTunnelNote}`, 'info');
         } else {
-            showMessage(`Service is online${autoTunnelNote}. Customers should upload only through the frontend.`, 'success');
+            const modeNote = result.config && result.config.autoTunnel
+                ? 'Temporary tunnel active.'
+                : 'Named tunnel active.';
+            showMessage(`Service is online${autoTunnelNote}. ${modeNote} Customers should upload only through the frontend.`, 'success');
         }
         
         if (result.config && result.config.uploadPublicUrl) {
