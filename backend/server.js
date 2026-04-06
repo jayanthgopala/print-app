@@ -54,6 +54,10 @@ export default {
                 return await withRequestLogging(request, env, ctx, baseLog, () => handleAdminLogin(request, env, requestId));
             }
 
+            if (request.method === 'POST' && url.pathname === '/admin/bootstrap') {
+                return await withRequestLogging(request, env, ctx, baseLog, () => handleAdminBootstrap(request, env, requestId));
+            }
+
             if (request.method === 'POST' && url.pathname === '/admin/create-shop') {
                 return await withRequestLogging(request, env, ctx, baseLog, () => handleCreateShop(request, env, requestId));
             }
@@ -190,12 +194,15 @@ async function handleShopToken(request, env, requestId) {
 async function handleAdminLogin(request, env, requestId) {
     const body = await readJson(request, env, requestId);
     if (body.errorResponse) return body.errorResponse;
-    const username = requireString(body.data.username, 'username', { min: 1, max: 100 });
+    const username = requireString(body.data.username, 'username', { min: 1, max: 100 }).trim();
     const password = requireString(body.data.password, 'password', { min: 1, max: 200 });
 
     const db = await createDbClient(env);
     try {
-        const result = await db.query('SELECT id, username, password_hash FROM admins WHERE username = $1 LIMIT 1', [username]);
+        const result = await db.query(
+            'SELECT id, username, password_hash FROM admins WHERE LOWER(username) = LOWER($1) LIMIT 1',
+            [username]
+        );
         const admin = result.rows[0];
         if (!admin || !(await comparePassword(password, admin.password_hash))) {
             return json({ error: 'Invalid credentials', request_id: requestId }, 401, request, env);
@@ -209,6 +216,48 @@ async function handleAdminLogin(request, env, requestId) {
         }, env.JWT_SECRET);
 
         return json({ request_id: requestId, token, admin: { id: admin.id, username: admin.username } }, 200, request, env);
+    } finally {
+        await db.end();
+    }
+}
+
+async function handleAdminBootstrap(request, env, requestId) {
+    const body = await readJson(request, env, requestId);
+    if (body.errorResponse) return body.errorResponse;
+    if (!env.ADMIN_SETUP_KEY) throw new Error('ADMIN_SETUP_KEY is not configured');
+
+    const setupKey = requireString(body.data.setupKey, 'setupKey', { min: 8, max: 500 });
+    if (!timingSafeEqual(setupKey, env.ADMIN_SETUP_KEY)) {
+        return json({ error: 'Invalid setup key', request_id: requestId }, 403, request, env);
+    }
+
+    const username = requireString(body.data.username, 'username', { min: 1, max: 100 }).trim();
+    const password = requireString(body.data.password, 'password', { min: 8, max: 200 });
+
+    const db = await createDbClient(env);
+    try {
+        const adminCountResult = await db.query('SELECT COUNT(*)::int AS count FROM admins');
+        const adminCount = adminCountResult.rows[0]?.count || 0;
+        if (adminCount > 0) {
+            return json({ error: 'Bootstrap disabled after first admin creation', request_id: requestId }, 403, request, env);
+        }
+
+        const existing = await db.query(
+            'SELECT id, username FROM admins WHERE LOWER(username) = LOWER($1) LIMIT 1',
+            [username]
+        );
+        if (existing.rows[0]) {
+            return json({ error: 'Admin username already exists', request_id: requestId }, 409, request, env);
+        }
+
+        const inserted = await db.query(
+            `INSERT INTO admins (id, username, password_hash)
+             VALUES ($1, $2, $3)
+             RETURNING id, username, created_at`,
+            [crypto.randomUUID(), username, await hashPassword(password)]
+        );
+
+        return json({ request_id: requestId, success: true, admin: inserted.rows[0] }, 200, request, env);
     } finally {
         await db.end();
     }

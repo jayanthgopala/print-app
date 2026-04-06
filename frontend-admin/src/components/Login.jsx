@@ -10,10 +10,11 @@ export default function Login({ onLogin }){
   async function submit(e){
     e.preventDefault()
     setMsg('')
-    if(!username || !password){ setMsg('Enter username and password'); return }
+    const normalizedUsername = username.trim()
+    if(!normalizedUsername || !password){ setMsg('Enter username and password'); return }
     setLoading(true)
     try{
-      const res = await apiPost('/admin/login', { username, password })
+      const res = await apiPost('/admin/login', { username: normalizedUsername, password })
       if(res && res.token){
         onLogin(res.token, res.admin)
       } else {
