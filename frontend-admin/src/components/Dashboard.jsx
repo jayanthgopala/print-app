@@ -6,6 +6,7 @@ export default function Dashboard({ token, admin, onLogout }){
   const [failedJobs, setFailedJobs] = useState([])
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ shopCode: '', shopName: '', password: '', colorPrice: '', bwPrice: '', subscriptionEnd: '' })
+  const [editForm, setEditForm] = useState(null)
   const [msg, setMsg] = useState('')
 
   async function load(){
@@ -55,22 +56,44 @@ export default function Dashboard({ token, admin, onLogout }){
     }catch(err){ setMsg(err.message || 'Delete error') }
   }
 
-  async function editShop(code){
-    const input = prompt('Enter subscription end date (YYYY-MM-DD) or number of days to set:')
-    if(!input) return;
+  function formatDateInput(value){
+    if(!value) return ''
+    const date = new Date(value)
+    if(Number.isNaN(date.getTime())) return ''
+    return date.toISOString().slice(0, 10)
+  }
+
+  function startEdit(shop){
     setMsg('')
-    let body = null
-    const trimmed = input.trim()
-    if(/^\d+$/.test(trimmed)){
-      body = { subscriptionDays: parseInt(trimmed, 10) }
-    } else {
-      const d = new Date(trimmed)
-      if(isNaN(d.getTime())){ setMsg('Invalid date or days'); return }
-      body = { subscriptionEnd: d.toISOString() }
+    setEditForm({
+      shopCode: shop.shop_code || shop.shopCode,
+      shopName: shop.shop_name || shop.shopName || '',
+      password: '',
+      colorPrice: String(shop.color_price ?? shop.colorPrice ?? ''),
+      bwPrice: String(shop.bw_price ?? shop.bwPrice ?? ''),
+      subscriptionEnd: formatDateInput(shop.subscription_end || shop.end_date || shop.expires_at || '')
+    })
+  }
+
+  async function saveEdit(e){
+    e.preventDefault()
+    if(!editForm) return
+    setMsg('')
+    const body = {}
+    const shopName = editForm.shopName.trim()
+    const password = editForm.password.trim()
+    if(shopName) body.shopName = shopName
+    if(editForm.colorPrice !== '') body.colorPrice = editForm.colorPrice
+    if(editForm.bwPrice !== '') body.bwPrice = editForm.bwPrice
+    if(password){
+      if(password.length < 8){ setMsg('Shop password must be at least 8 characters'); return }
+      body.password = password
     }
+    if(editForm.subscriptionEnd) body.subscriptionEnd = new Date(editForm.subscriptionEnd).toISOString()
+    if(Object.keys(body).length === 0){ setMsg('No fields to update'); return }
     try{
-      const res = await apiPatch(`/admin/shop/${encodeURIComponent(code)}`, body, token)
-      if(res && res.success){ setMsg('Shop updated'); load() }
+      const res = await apiPatch(`/admin/shop/${encodeURIComponent(editForm.shopCode)}`, body, token)
+      if(res && res.success){ setMsg('Shop updated'); setEditForm(null); load() }
       else setMsg(res.error || 'Update failed')
     }catch(err){ setMsg(err.message || 'Update error') }
   }
@@ -162,6 +185,38 @@ export default function Dashboard({ token, admin, onLogout }){
             <h3>Shops</h3>
           </div>
         </div>
+        {editForm && (
+          <form className="shop-form edit-panel" onSubmit={saveEdit}>
+            <div className="field">
+              <label>Shop Code</label>
+              <input value={editForm.shopCode} disabled />
+            </div>
+            <div className="field">
+              <label>Shop Name</label>
+              <input value={editForm.shopName} onChange={e=>setEditForm({...editForm, shopName: e.target.value})} />
+            </div>
+            <div className="field field-wide">
+              <label>New Password</label>
+              <input type="password" value={editForm.password} minLength={8} placeholder="Leave blank to keep existing password" onChange={e=>setEditForm({...editForm, password: e.target.value})} />
+            </div>
+            <div className="field">
+              <label>Color Price</label>
+              <input value={editForm.colorPrice} onChange={e=>setEditForm({...editForm, colorPrice: e.target.value})} />
+            </div>
+            <div className="field">
+              <label>BW Price</label>
+              <input value={editForm.bwPrice} onChange={e=>setEditForm({...editForm, bwPrice: e.target.value})} />
+            </div>
+            <div className="field field-wide">
+              <label>Subscription End Date</label>
+              <input type="date" value={editForm.subscriptionEnd} onChange={e=>setEditForm({...editForm, subscriptionEnd: e.target.value})} />
+            </div>
+            <div className="inline-actions field-wide">
+              <button type="submit">Save Changes</button>
+              <button type="button" className="ghost subtle" onClick={()=>setEditForm(null)}>Cancel</button>
+            </div>
+          </form>
+        )}
         {loading ? <div>Loading...</div> : (
           <div className="table-wrap">
           <table className="table">
@@ -183,7 +238,7 @@ export default function Dashboard({ token, admin, onLogout }){
                         <td>{start ? new Date(start).toLocaleString() : ''}</td>
                         <td>{end ? new Date(end).toLocaleString() : ''}</td>
                         <td>
-                          <button onClick={()=>editShop(s.shop_code || s.shopCode)}>Edit</button>
+                          <button onClick={()=>startEdit(s)}>Edit</button>
                           <button className="danger" onClick={()=>deleteShop(s.shop_code || s.shopCode)}>Delete</button>
                         </td>
                       </>

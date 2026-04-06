@@ -169,6 +169,14 @@ p{ color:var(--muted); line-height:1.6 }
   gap:14px 16px;
 }
 
+.edit-panel{
+  margin-bottom:16px;
+  padding:18px;
+  border-radius:20px;
+  background:rgba(31,111,95,0.06);
+  border:1px solid rgba(31,111,95,0.14);
+}
+
 .field{ display:grid; gap:6px }
 .field-wide{ grid-column:span 2 }
 
@@ -211,6 +219,11 @@ button.ghost{
   background:rgba(255,255,255,0.12);
   border:1px solid rgba(255,255,255,0.2);
 }
+button.subtle{
+  color:var(--ink);
+  background:rgba(31,34,32,0.06);
+  border:1px solid rgba(31,34,32,0.08);
+}
 button.danger{ background:var(--danger) }
 
 .muted{ color:var(--muted) }
@@ -249,6 +262,12 @@ button.danger{ background:var(--danger) }
   text-transform:uppercase;
   letter-spacing:.08em;
   color:#5d665d;
+}
+
+.inline-actions{
+  display:flex;
+  gap:10px;
+  align-items:center;
 }
 
 @media (max-width: 900px){
