@@ -88,25 +88,6 @@ p{ color:var(--muted); line-height:1.6 }
   padding:24px 10px;
 }
 
-.feature-list{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  margin-top:22px;
-}
-
-.feature-pill{
-  border:1px solid rgba(255,255,255,0.4);
-  color:var(--brand-dark);
-  background:rgba(255,255,255,0.26);
-  -webkit-backdrop-filter:blur(16px);
-  backdrop-filter:blur(16px);
-  padding:10px 14px;
-  border-radius:999px;
-  font-size:.92rem;
-  box-shadow:var(--glow);
-}
-
 .auth-card{
   max-width:440px;
   justify-self:end;
@@ -115,6 +96,10 @@ p{ color:var(--muted); line-height:1.6 }
 .stack-form{
   display:grid;
   gap:8px;
+}
+
+.gate-panel{
+  padding-top:4px;
 }
 
 .dashboard{

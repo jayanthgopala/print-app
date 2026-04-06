@@ -17,6 +17,8 @@ const ALLOWED_FILE_TYPES = new Set([
     'image/png'
 ]);
 const RATE_LIMITS = {
+    '/admin/login': { limit: 10, windowSeconds: 60 },
+    '/auth/login': { limit: 20, windowSeconds: 60 },
     '/upload-url': { limit: 30, windowSeconds: 60 },
     '/job/create': { limit: 60, windowSeconds: 60 },
     '/jobs': { limit: 120, windowSeconds: 60 }
@@ -156,6 +158,7 @@ async function handleShopToken(request, env, requestId) {
     const password = requireString(body.data.password, 'password', { min: 1, max: 200 });
     const db = await createDbClient(env);
     try {
+        await enforceRateLimit(db, request, '/auth/login', `${shopCode}:${clientAddress(request)}`, requestId);
         const shop = await getShopByCode(db, shopCode);
         if (!shop || !(await comparePassword(password, shop.password_hash))) {
             return json({ error: 'Invalid credentials', request_id: requestId }, 401, request, env);
@@ -195,6 +198,7 @@ async function handleAdminLogin(request, env, requestId) {
 
     const db = await createDbClient(env);
     try {
+        await enforceRateLimit(db, request, '/admin/login', `${username.toLowerCase()}:${clientAddress(request)}`, requestId);
         const result = await db.query(
             'SELECT id, username, password_hash FROM admins WHERE LOWER(username) = LOWER($1) LIMIT 1',
             [username]
@@ -208,7 +212,7 @@ async function handleAdminLogin(request, env, requestId) {
             isAdmin: true,
             adminId: admin.id,
             username: admin.username,
-            exp: unixTime() + (12 * 60 * 60)
+            exp: unixTime() + (2 * 60 * 60)
         }, env.JWT_SECRET);
 
         return json({ request_id: requestId, token, admin: { id: admin.id, username: admin.username } }, 200, request, env);
@@ -1028,6 +1032,9 @@ function json(payload, status, request, env, extraHeaders = {}) {
             'Content-Type': 'application/json',
             'Cache-Control': 'no-store',
             'X-Content-Type-Options': 'nosniff',
+            'X-Frame-Options': 'DENY',
+            'Referrer-Policy': 'strict-origin-when-cross-origin',
+            'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
             ...buildCorsHeaders(request, env),
             ...extraHeaders
         }

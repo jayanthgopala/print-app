@@ -113,9 +113,6 @@ export default function Dashboard({ token, admin, onLogout }){
         <div className="hero-copy">
           <div className="eyebrow">Operations Console</div>
           <h2>Admin Dashboard</h2>
-          <p>
-            Monitor shop access, issue credentials, and recover failed print jobs from a single control surface.
-          </p>
         </div>
         <div className="hero-actions">
           <div className="hero-user">
