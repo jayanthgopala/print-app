@@ -2,7 +2,6 @@ Set these from `C:\Users\jayanth gopala v\Desktop\APPLICATION V1.0\backend`.
 
 `wrangler secret put DATABASE_URL`
 `wrangler secret put JWT_SECRET`
-`wrangler secret put ADMIN_SETUP_KEY`
 `wrangler secret put R2_ACCOUNT_ID`
 `wrangler secret put R2_BUCKET_NAME`
 `wrangler secret put R2_ACCESS_KEY_ID`
@@ -30,8 +29,6 @@ PowerShell:
 Use that output for:
 
 `JWT_SECRET`
-`ADMIN_SETUP_KEY`
 
 Do not put the admin login password in `.env`, `.dev.vars`, or Worker secrets.
 The admin login password should exist only in PostgreSQL as a password hash.
-`ADMIN_SETUP_KEY` is only for one-time admin bootstrap or controlled admin creation, not for daily login.
