@@ -5,8 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 FRONTEND_URL = "https://buildergrids.tech"
-ADMIN_FRONTEND_URL = "https://admin.buildergrids.tech"
-ALLOWED_ORIGINS = "https://buildergrids.tech"
+ADMIN_FRONTEND_URL = "https://admindeveloper.buildergrids.tech"
+ALLOWED_ORIGINS = "https://buildergrids.tech,https://admindeveloper.buildergrids.tech"
 
 [observability]
 enabled = true

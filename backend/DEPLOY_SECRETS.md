@@ -16,7 +16,7 @@ Set these in `wrangler.toml` vars or Cloudflare dashboard vars:
 
 Recommended values:
 
-`DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.tfyrdepwhbfutfgqkryb.supabase.co:5432/postgres`
+`DATABASE_URL=postgresql://postgres.[YOUR-PROJECT-REF]:[YOUR-PASSWORD]@aws-1-[YOUR-REGION].pooler.supabase.com:6543/postgres`
 `FRONTEND_URL=https://your-frontend-url`
 `ADMIN_FRONTEND_URL=https://your-admin-frontend-url`
 `ALLOWED_ORIGINS=https://your-frontend-url,https://your-admin-frontend-url`
