@@ -821,7 +821,7 @@ function doesTicketMatchPayload(ticket, payload) {
 }
 
 async function createDbClient(env) {
-    const connectionString = env.DATABASE_URL || env.SUPABASE_DATABASE_URL || '';
+    const connectionString = env.HYPERDRIVE?.connectionString || env.DATABASE_URL || env.SUPABASE_DATABASE_URL || '';
     if (!connectionString) throw new Error('DATABASE_URL is not configured');
 
     if (!sharedSql || sharedConnectionString !== connectionString) {

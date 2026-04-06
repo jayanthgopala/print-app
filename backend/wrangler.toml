@@ -20,3 +20,7 @@ enabled = true
 [[r2_buckets]]
 binding = "FILES_BUCKET"
 bucket_name = "printapp"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "5962526185034af39775507c9ec36ef2"
