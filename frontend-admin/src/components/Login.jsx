@@ -33,6 +33,7 @@ export default function Login({ onLogin }){
       <section className="auth-intro">
         <div className="eyebrow">Restricted System</div>
         <h1>Restricted access.</h1>
+        <div className="muted">Authorized personnel only</div>
       </section>
 
       <section className="card auth-card">
@@ -43,7 +44,6 @@ export default function Login({ onLogin }){
           <div className="stack-form gate-panel">
             <label>Access phrase</label>
             <input value={gateValue} onChange={e=>setGateValue(e.target.value)} placeholder="Enter access phrase" autoComplete="off" />
-            <div className="muted">Authorized personnel only</div>
             <button
               type="button"
               disabled={gateValue.trim().toUpperCase() !== ACCESS_PHRASE}
