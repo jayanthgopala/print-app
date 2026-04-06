@@ -1,7 +1,8 @@
 import { AwsClient } from 'aws4fetch';
-import pg from 'pg';
+import postgres from 'postgres';
 
-const { Client } = pg;
+let sharedSql = null;
+let sharedConnectionString = '';
 
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 const JOB_FETCH_LIMIT = 20;
@@ -822,9 +823,28 @@ function doesTicketMatchPayload(ticket, payload) {
 async function createDbClient(env) {
     const connectionString = env.DATABASE_URL || env.SUPABASE_DATABASE_URL || '';
     if (!connectionString) throw new Error('DATABASE_URL is not configured');
-    const client = new Client({ connectionString, ssl: true });
-    await client.connect();
-    return client;
+
+    if (!sharedSql || sharedConnectionString !== connectionString) {
+        sharedConnectionString = connectionString;
+        sharedSql = postgres(connectionString, {
+            ssl: 'require',
+            prepare: false,
+            fetch_types: false,
+            max: 1,
+            idle_timeout: 20,
+            connect_timeout: 15
+        });
+    }
+
+    return {
+        async query(text, params = []) {
+            const rows = await sharedSql.unsafe(text, params);
+            return { rows };
+        },
+        async end() {
+            // Reuse the shared client across requests to avoid repeated setup churn in Workers.
+        }
+    };
 }
 
 async function getShopByCode(db, shopCode) {
