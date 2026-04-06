@@ -238,8 +238,10 @@ export default function Dashboard({ token, admin, onLogout }){
                         <td>{start ? new Date(start).toLocaleString() : ''}</td>
                         <td>{end ? new Date(end).toLocaleString() : ''}</td>
                         <td>
-                          <button onClick={()=>startEdit(s)}>Edit</button>
-                          <button className="danger" onClick={()=>deleteShop(s.shop_code || s.shopCode)}>Delete</button>
+                          <div className="row-actions">
+                            <button onClick={()=>startEdit(s)}>Edit</button>
+                            <button className="danger" onClick={()=>deleteShop(s.shop_code || s.shopCode)}>Delete</button>
+                          </div>
                         </td>
                       </>
                     )

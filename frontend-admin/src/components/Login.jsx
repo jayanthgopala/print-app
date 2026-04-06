@@ -28,29 +28,29 @@ export default function Login({ onLogin }){
   return (
     <div className="auth-shell">
       <section className="auth-intro">
-        <div className="eyebrow">BuilderGrids Admin</div>
-        <h1>Control print shops, subscriptions, and failure recovery from one console.</h1>
+        <div className="eyebrow">Restricted System</div>
+        <h1>Internal access point for authorized operators only.</h1>
         <p>
-          Sign in to create shops, manage access windows, and re-queue failed jobs without leaving the dashboard.
+          This interface is intended for internal operational use. Unrecognized access attempts are not supported here.
         </p>
         <div className="feature-list">
-          <div className="feature-pill">Shop provisioning</div>
-          <div className="feature-pill">Subscription control</div>
-          <div className="feature-pill">Failure retry queue</div>
+          <div className="feature-pill">Restricted</div>
+          <div className="feature-pill">Authorized personnel</div>
+          <div className="feature-pill">Internal workflow</div>
         </div>
       </section>
 
       <section className="card auth-card">
-        <div className="card-kicker">Secure access</div>
-        <h2>Admin Login</h2>
-        <p className="muted">Use your admin username and password to access the console.</p>
+        <div className="card-kicker">Verification</div>
+        <h2>System Access</h2>
+        <p className="muted">Proceed only if you were explicitly issued credentials for this environment.</p>
         {msg && <div className="msg">{msg}</div>}
         <form className="stack-form" onSubmit={submit}>
-          <label>Username</label>
-          <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="ADMIN" autoComplete="username" />
-          <label>Password</label>
-          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter password" autoComplete="current-password" />
-          <button disabled={loading}>{loading? 'Signing in...':'Sign In'}</button>
+          <label>Identifier</label>
+          <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Issued identifier" autoComplete="username" />
+          <label>Credential</label>
+          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Verification string" autoComplete="current-password" />
+          <button disabled={loading}>{loading? 'Verifying...':'Proceed'}</button>
         </form>
       </section>
     </div>
