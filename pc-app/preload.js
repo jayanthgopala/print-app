@@ -8,11 +8,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     generateQR: (shopId) => ipcRenderer.invoke('generate-qr', shopId),
     printQR: (payload) => ipcRenderer.invoke('print-qr', payload),
     startService: () => ipcRenderer.invoke('start-service'),
-    saveReceivedFile: (payload) => ipcRenderer.invoke('save-received-file', payload),
     getPrinters: () => ipcRenderer.invoke('get-printers'),
+    updateJobStatus: (payload) => ipcRenderer.invoke('update-job-status', payload),
+    completeJob: (payload) => ipcRenderer.invoke('complete-job', payload),
     printFile: (filePath, options) => ipcRenderer.invoke('print-file', filePath, options),
     openNativePrintDialog: (filePath) => ipcRenderer.invoke('open-native-print-dialog', filePath),
     deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),
     onFileReceived: (callback) => ipcRenderer.on('file-received', (event, data) => callback(data)),
+    onJobProcessed: (callback) => ipcRenderer.on('job-processed', (event, data) => callback(data)),
     onTunnelStatus: (callback) => ipcRenderer.on('tunnel-status', (event, data) => callback(data))
 });

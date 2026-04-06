@@ -14,23 +14,17 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (pwdEl) pwdEl.value = settings.password || '';
     document.getElementById('downloadPath').value = settings.downloadPath || '';
     
-    // Listen for tunnel status updates
+    // Listen for backend polling status updates
     window.electronAPI.onTunnelStatus((data) => {
         console.log('Tunnel status:', data);
-        if (data.status === 'url-detected' && data.url) {
-            showMessage(`Tunnel created. Verifying public health: ${data.url}`, 'info', 5000);
-        } else if (data.status === 'starting') {
-            document.getElementById('statusBadge').textContent = 'Starting';
-            document.getElementById('statusBadge').className = 'status offline';
-            showMessage('Starting tunnel...', 'info', 3000);
+        if (data.status === 'online') {
+            document.getElementById('statusBadge').textContent = 'Online';
+            document.getElementById('statusBadge').className = 'status online';
+            showMessage('Polling backend for new jobs.', 'success', 3000);
         } else if (data.status === 'offline') {
             document.getElementById('statusBadge').textContent = 'Offline';
             document.getElementById('statusBadge').className = 'status offline';
-            showMessage('Tunnel is offline.', 'error');
-        } else if (data.status === 'error') {
-            document.getElementById('statusBadge').textContent = 'Offline';
-            document.getElementById('statusBadge').className = 'status offline';
-            showMessage(`Tunnel error: ${data.error}`, 'error');
+            showMessage('Backend polling is offline.', 'error');
         }
     });
     
@@ -65,6 +59,14 @@ window.addEventListener('DOMContentLoaded', async () => {
         customerGroups.get(customerKey).push(orderWithId);
         
         renderOrders();
+    });
+
+    window.electronAPI.onJobProcessed(({ jobId }) => {
+        const order = orders.find((item) => item.jobId === jobId);
+        if (order) {
+            order.printed = true;
+            renderOrders();
+        }
     });
 });
 
@@ -186,36 +188,13 @@ async function saveAndStart() {
     const result = await window.electronAPI.startService();
     if (result.success) {
         clearMessage();
-        if (result.config && result.config.status === 'starting') {
-            document.getElementById('statusBadge').textContent = 'Starting';
-            document.getElementById('statusBadge').className = 'status offline';
-        } else {
-            document.getElementById('statusBadge').textContent = 'Online';
-            document.getElementById('statusBadge').className = 'status online';
-        }
-        
-        const autoTunnelNote = result.config && result.config.autoTunnel ? ' (Auto-tunnel active)' : '';
-        if (result.config && result.config.status === 'starting') {
-            showMessage(`${result.message || 'Tunnel is starting'}${autoTunnelNote}`, 'info');
-        } else {
-            const modeNote = result.config && result.config.autoTunnel
-                ? 'Temporary tunnel active.'
-                : 'Named tunnel active.';
-            showMessage(`Service is online${autoTunnelNote}. ${modeNote} Customers should upload only through the frontend.`, 'success');
-        }
-        
-        if (result.config && result.config.uploadPublicUrl) {
-            showMessage(`Tunnel URL: ${result.config.uploadPublicUrl}`, 'info');
-        }
+        document.getElementById('statusBadge').textContent = 'Online';
+        document.getElementById('statusBadge').className = 'status online';
+        showMessage(result.message || 'Service is online. The app will poll the backend and download jobs from R2.', 'success');
     } else {
         document.getElementById('statusBadge').textContent = 'Offline';
         document.getElementById('statusBadge').className = 'status offline';
-        const message = String(result.message || '');
-        if (message.toLowerCase().includes('cloudflared not installed')) {
-            showMessage('Tunnel service is missing. Click "Install Tunnel Service", approve the Windows admin prompt, then start the service again.', 'error');
-        } else {
-            showMessage('Error: ' + result.message, 'error');
-        }
+        showMessage('Error: ' + result.message, 'error');
     }
 }
 
@@ -223,16 +202,12 @@ async function installCloudflared() {
     try {
         const result = await window.electronAPI.installCloudflared();
         if (result.success) {
-            if (result.method === 'winget') {
-                showMessage('Official Cloudflared install launched via Windows Package Manager. Approve the admin prompt, finish installation, then click "Save and Start Service" again.', 'info');
-            } else {
-                showMessage('Cloudflared installer launched. Approve the admin prompt, finish installation, then click "Save and Start Service" again.', 'info');
-            }
+            showMessage(result.message || 'No tunnel installation is required.', 'info');
         } else {
-            showMessage('Could not launch Cloudflared installer: ' + result.message, 'error');
+            showMessage(result.message || 'Local tunnel installation is no longer required.', 'info');
         }
     } catch (error) {
-        showMessage('Could not launch Cloudflared installer: ' + error.message, 'error');
+        showMessage('Local tunnel installation is no longer required.', 'info');
     }
 }
 
@@ -408,7 +383,7 @@ function skipCustomer(customerName) {
 
 async function printFileFromButton(button) {
     const filePath = button.getAttribute('data-filepath');
-    const orderId = parseInt(button.getAttribute('data-orderid'));
+    const orderId = button.getAttribute('data-orderid');
     const order = orders.find(o => o.id === orderId);
     
     if (!order) return;
@@ -512,6 +487,11 @@ async function confirmPrint() {
     try {
         const results = [];
 
+        const markPrinting = await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'printing' });
+        if (!markPrinting.success) {
+            throw new Error(markPrinting.message || 'Could not mark job as printing');
+        }
+
         // Print color pages if specified
         if (colorPages && colorPrinter) {
             const result = await window.electronAPI.printFile(filePath, {
@@ -552,6 +532,11 @@ async function confirmPrint() {
                 order.printed = true;
             }
 
+            const completeResult = await window.electronAPI.completeJob({ jobId: order.jobId });
+            if (!completeResult.success) {
+                throw new Error(completeResult.message || 'Could not complete job');
+            }
+
             // Delete the file after successful print
             try {
                 const deleteResult = await window.electronAPI.deleteFile(filePath);
@@ -566,8 +551,10 @@ async function confirmPrint() {
             closePrintModal();
         } else {
             alert('No pages were printed');
+            await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'pending' });
         }
     } catch (error) {
+        await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'pending' });
         alert('Print error: ' + error.message);
     }
 }

@@ -3,6 +3,7 @@ import { apiGet, apiPost, apiDelete, apiPatch } from '../lib/api'
 
 export default function Dashboard({ token, onLogout }){
   const [shops, setShops] = useState([])
+  const [failedJobs, setFailedJobs] = useState([])
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ shopCode: '', shopName: '', password: '', colorPrice: '', bwPrice: '', subscriptionEnd: '' })
   const [msg, setMsg] = useState('')
@@ -12,6 +13,8 @@ export default function Dashboard({ token, onLogout }){
     try{
       const res = await apiGet('/admin/shops', token)
       setShops(res.shops || [])
+      const failed = await apiGet('/admin/jobs/failed', token)
+      setFailedJobs(failed.jobs || [])
     }catch(err){ setMsg(err.message || 'Failed to load') }
     setLoading(false)
   }
@@ -56,6 +59,15 @@ export default function Dashboard({ token, onLogout }){
       if(res && res.success){ setMsg('Shop updated'); load() }
       else setMsg(res.error || 'Update failed')
     }catch(err){ setMsg(err.message || 'Update error') }
+  }
+
+  async function retryFailedJob(jobId){
+    setMsg('')
+    try{
+      const res = await apiPost('/admin/job/retry', { jobId }, token)
+      if(res && res.success){ setMsg('Failed job re-queued'); load() }
+      else setMsg(res.error || 'Retry failed')
+    }catch(err){ setMsg(err.message || 'Retry error') }
   }
 
   return (
@@ -119,6 +131,28 @@ export default function Dashboard({ token, onLogout }){
                       </>
                     )
                   })()}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="card">
+        <h3>Failed Jobs</h3>
+        {failedJobs.length === 0 ? <div>No failed jobs</div> : (
+          <table className="table">
+            <thead><tr><th>Job ID</th><th>Shop</th><th>File</th><th>Retries</th><th>Error</th><th>Updated</th><th>Action</th></tr></thead>
+            <tbody>
+              {failedJobs.map(job => (
+                <tr key={job.id}>
+                  <td>{job.id}</td>
+                  <td>{job.shop_code}</td>
+                  <td>{job.file_name}</td>
+                  <td>{job.retry_count}</td>
+                  <td>{job.last_error}</td>
+                  <td>{job.updated_at ? new Date(job.updated_at).toLocaleString() : ''}</td>
+                  <td><button onClick={()=>retryFailedJob(job.id)}>Retry</button></td>
                 </tr>
               ))}
             </tbody>

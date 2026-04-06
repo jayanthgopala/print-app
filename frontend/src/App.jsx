@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { API_URL } from './config';
 import './App.css';
 
@@ -17,7 +17,6 @@ const DEFAULT_PRINT_SETTINGS = {
 };
 
 export default function App() {
-    const transferClientRef = useRef(null);
     const [shopId, setShopId] = useState('');
     const [connectedShopId, setConnectedShopId] = useState('');
     const [status, setStatus] = useState('DISCONNECTED');
@@ -63,7 +62,6 @@ export default function App() {
         return () => {
             window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
             navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage);
-            transferClientRef.current = null;
         };
     }, []);
 
@@ -148,7 +146,6 @@ export default function App() {
 
             if (!response.ok) {
                 setConnectedShopId('');
-                transferClientRef.current = null;
                 setStatus('DISCONNECTED');
                 setInfoMessage('');
                 setErrorMessage(data.error || 'Shop details could not be loaded.');
@@ -157,7 +154,6 @@ export default function App() {
 
             if (!data.shop) {
                 setConnectedShopId('');
-                transferClientRef.current = null;
                 setStatus('DISCONNECTED');
                 setInfoMessage('');
                 setErrorMessage('Shop details could not be loaded.');
@@ -166,12 +162,7 @@ export default function App() {
 
             setConnectedShopId(normalizedShopId);
             setPricing(data.shop);
-            transferClientRef.current = {
-                shopId: normalizedShopId,
-                uploadEndpoint: data.shop.pcEndpoint || null
-            };
-
-            if (data.shop.status === 'online' && data.shop.pcEndpoint) {
+            if (data.shop.status === 'online') {
                 setStatus('ONLINE');
                 setErrorMessage('');
                 setInfoMessage('Shop is online. You can upload files now.');
@@ -179,7 +170,7 @@ export default function App() {
                 setStatus('OFFLINE');
                 setInfoMessage('');
                 if (!options.silent || status !== 'OFFLINE') {
-                    setErrorMessage('Shop is offline or upload endpoint is not configured right now.');
+                    setErrorMessage('Shop is offline right now.');
                 }
             }
 
@@ -238,7 +229,7 @@ export default function App() {
     };
 
     const handleSend = async () => {
-        if (!transferClientRef.current) {
+        if (!connectedShopId) {
             setErrorMessage('Connect to a shop before sending files.');
             return;
         }
@@ -260,61 +251,13 @@ export default function App() {
         setProgress(0);
 
         try {
-            const uploadTarget = transferClientRef.current?.uploadEndpoint;
-            if (!uploadTarget) {
-                throw new Error('Shop upload endpoint is not available. Ask the shop to start the PC app and tunnel.');
-            }
-
-            const healthResponse = await fetch(`${String(uploadTarget).replace(/\/$/, '')}/health`, {
-                method: 'GET',
-                headers: { Accept: 'application/json' }
-            });
-            if (!healthResponse.ok) {
-                throw new Error('Shop upload server is not reachable right now. Wait a moment and try again.');
-            }
-
-            const tokenResponse = await fetch(`${API_URL}/auth/client-token`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ shopCode: transferClientRef.current.shopId })
-            });
-
-            if (!tokenResponse.ok) {
-                const errorText = await tokenResponse.text();
-                throw new Error(errorText || 'Could not create upload token');
-            }
-
-            const tokenPayload = await tokenResponse.json();
-            const uploadToken = tokenPayload.token;
-
             for (let i = 0; i < files.length; i++) {
                 setCurrentFile(i + 1);
                 setStatus('TRANSFERRING');
                 const item = files[i];
-                const metadata = {
-                    customerName,
-                    fileIndex: i + 1,
-                    totalFiles: files.length,
-                    colorPages: item.file.type.startsWith('image/')
-                        ? (item.imageMode === 'color' ? 'Full Image' : '')
-                        : (item.pageMode === 'all-color' ? 'All Pages' : (item.colorPages || '')),
-                    bwPages: item.file.type.startsWith('image/')
-                        ? (item.imageMode === 'bw' ? 'Full Image' : '')
-                        : (item.pageMode === 'all-bw' ? 'All Pages' : (item.bwPages || '')),
-                    paperSize: item.paperSize || 'A4',
-                    orientation: item.orientation || 'portrait',
-                    copies: Number(item.copies || 1),
-                    duplex: item.duplex || 'simplex',
-                    scale: item.scale || 'fit'
-                };
-
-                await uploadFileToShop({
-                    endpoint: uploadTarget,
-                    token: uploadToken,
-                    file: item.file,
-                    metadata,
-                    onProgress: setProgress
-                });
+                const uploadPlan = await createUploadPlan(connectedShopId, item.file);
+                await uploadFileToR2(uploadPlan.uploadUrl, item.file, setProgress);
+                await createJobRecord(connectedShopId, item, uploadPlan);
                 await new Promise((resolve) => setTimeout(resolve, 400));
             }
             setFiles([]);
@@ -663,26 +606,32 @@ export default function App() {
     );
 }
 
-function uploadFileToShop({ endpoint, token, file, metadata, onProgress }) {
+async function createUploadPlan(shopCode, file) {
+    const response = await fetch(`${API_URL}/upload-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            shopCode,
+            fileName: file.name,
+            contentType: file.type || 'application/octet-stream',
+            fileSize: file.size
+        })
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload.error || 'Could not create upload URL');
+    }
+
+    return payload;
+}
+
+function uploadFileToR2(uploadUrl, file, onProgress) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${String(endpoint).replace(/\/$/, '')}/upload`);
+        xhr.open('PUT', uploadUrl);
         xhr.timeout = 45000;
-        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-        xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
-        xhr.setRequestHeader('X-File-Size', String(file.size));
-        xhr.setRequestHeader('X-File-Type', encodeURIComponent(file.type || 'application/octet-stream'));
-        xhr.setRequestHeader('X-Customer-Name', encodeURIComponent(metadata.customerName || 'Unknown'));
-        xhr.setRequestHeader('X-Color-Pages', encodeURIComponent(metadata.colorPages || ''));
-        xhr.setRequestHeader('X-BW-Pages', encodeURIComponent(metadata.bwPages || ''));
-        xhr.setRequestHeader('X-Paper-Size', encodeURIComponent(metadata.paperSize || 'A4'));
-        xhr.setRequestHeader('X-Orientation', encodeURIComponent(metadata.orientation || 'portrait'));
-        xhr.setRequestHeader('X-Copies', String(Number(metadata.copies || 1)));
-        xhr.setRequestHeader('X-Duplex', encodeURIComponent(metadata.duplex || 'simplex'));
-        xhr.setRequestHeader('X-Scale', encodeURIComponent(metadata.scale || 'fit'));
-        xhr.setRequestHeader('X-File-Index', String(metadata.fileIndex || 1));
-        xhr.setRequestHeader('X-Total-Files', String(metadata.totalFiles || 1));
 
         xhr.upload.onprogress = (event) => {
             if (event.lengthComputable) {
@@ -690,8 +639,8 @@ function uploadFileToShop({ endpoint, token, file, metadata, onProgress }) {
             }
         };
 
-        xhr.onerror = () => reject(new Error('Upload failed. Check the shop tunnel and try again.'));
-        xhr.ontimeout = () => reject(new Error('Upload timed out while connecting to the shop tunnel.'));
+        xhr.onerror = () => reject(new Error('Upload to R2 failed.'));
+        xhr.ontimeout = () => reject(new Error('Upload to R2 timed out.'));
         xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
                 resolve();
@@ -708,6 +657,46 @@ function uploadFileToShop({ endpoint, token, file, metadata, onProgress }) {
 
         xhr.send(file);
     });
+}
+
+async function createJobRecord(shopCode, item, uploadPlan) {
+    const colorMode = item.file.type.startsWith('image/')
+        ? item.imageMode
+        : (item.pageMode === 'all-color' ? 'color' : 'bw');
+
+    const colorPages = item.file.type.startsWith('image/')
+        ? (item.imageMode === 'color' ? 'Full Image' : '')
+        : (item.pageMode === 'all-color' ? 'All Pages' : (item.colorPages || ''));
+
+    const bwPages = item.file.type.startsWith('image/')
+        ? (item.imageMode === 'bw' ? 'Full Image' : '')
+        : (item.pageMode === 'all-bw' ? 'All Pages' : (item.bwPages || ''));
+
+    const response = await fetch(`${API_URL}/job/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            shopCode,
+            fileUrl: uploadPlan.fileUrl,
+            objectKey: uploadPlan.objectKey,
+            uploadTicket: uploadPlan.uploadTicket,
+            fileName: item.file.name,
+            contentType: item.file.type || 'application/octet-stream',
+            copies: Number(item.copies || 1),
+            colorMode,
+            colorPages,
+            bwPages,
+            paperSize: item.paperSize || 'A4',
+            orientation: item.orientation || 'portrait',
+            duplex: item.duplex || 'simplex',
+            scale: item.scale || 'fit'
+        })
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload.error || 'Could not save job metadata');
+    }
 }
 
 function normalizeShopCode(value) {
