@@ -19,4 +19,4 @@ enabled = true
 
 [[r2_buckets]]
 binding = "FILES_BUCKET"
-bucket_name = "print-jobs"
+bucket_name = "printapp"
