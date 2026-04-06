@@ -1,8 +1,7 @@
 import { AwsClient } from 'aws4fetch';
-import postgres from 'postgres';
+import pg from 'pg';
 
-let sharedSql = null;
-let sharedConnectionString = '';
+const { Client } = pg;
 
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 const JOB_FETCH_LIMIT = 20;
@@ -272,7 +271,7 @@ async function handleCreateShop(request, env, requestId) {
 
     const shopCode = requireShopCode(body.data.shopCode);
     const shopName = requireString(body.data.shopName || shopCode, 'shopName', { min: 1, max: 120 });
-    const password = requireString(body.data.password, 'password', { min: 8, max: 200 });
+    const password = requireShopPassword(body.data.password);
     const colorPrice = optionalNumber(body.data.colorPrice);
     const bwPrice = optionalNumber(body.data.bwPrice);
     const subscriptionEnd = resolveSubscriptionEnd(body.data.subscriptionEnd, body.data.subscriptionDays);
@@ -823,28 +822,13 @@ function doesTicketMatchPayload(ticket, payload) {
 async function createDbClient(env) {
     const connectionString = env.HYPERDRIVE?.connectionString || env.DATABASE_URL || env.SUPABASE_DATABASE_URL || '';
     if (!connectionString) throw new Error('DATABASE_URL is not configured');
-
-    if (!sharedSql || sharedConnectionString !== connectionString) {
-        sharedConnectionString = connectionString;
-        sharedSql = postgres(connectionString, {
-            ssl: 'require',
-            prepare: false,
-            fetch_types: false,
-            max: 1,
-            idle_timeout: 20,
-            connect_timeout: 15
-        });
-    }
-
-    return {
-        async query(text, params = []) {
-            const rows = await sharedSql.unsafe(text, params);
-            return { rows };
-        },
-        async end() {
-            // Reuse the shared client across requests to avoid repeated setup churn in Workers.
-        }
-    };
+    const client = new Client(
+        env.HYPERDRIVE?.connectionString
+            ? { connectionString }
+            : { connectionString, ssl: true }
+    );
+    await client.connect();
+    return client;
 }
 
 async function getShopByCode(db, shopCode) {
@@ -950,6 +934,14 @@ function requireShopCode(value) {
     const normalized = normalizeShopCode(value);
     if (!normalized) throw new HttpError(400, 'shopCode required');
     if (!/^[A-Z0-9_-]{3,40}$/.test(normalized)) throw new HttpError(400, 'Invalid shopCode');
+    return normalized;
+}
+
+function requireShopPassword(value) {
+    const normalized = String(value || '').trim();
+    if (normalized.length < 8 || normalized.length > 200) {
+        throw new HttpError(400, 'Shop password must be 8 to 200 characters');
+    }
     return normalized;
 }
 

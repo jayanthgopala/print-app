@@ -26,16 +26,33 @@ export default function Login({ onLogin }){
   }
 
   return (
-    <div className="card">
-      <h2>Admin Login</h2>
-      {msg && <div className="msg">{msg}</div>}
-      <form onSubmit={submit}>
-        <label>Username</label>
-        <input value={username} onChange={e=>setUsername(e.target.value)} />
-        <label>Password</label>
-        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} />
-        <button disabled={loading}>{loading? 'Signing in...':'Sign In'}</button>
-      </form>
+    <div className="auth-shell">
+      <section className="auth-intro">
+        <div className="eyebrow">BuilderGrids Admin</div>
+        <h1>Control print shops, subscriptions, and failure recovery from one console.</h1>
+        <p>
+          Sign in to create shops, manage access windows, and re-queue failed jobs without leaving the dashboard.
+        </p>
+        <div className="feature-list">
+          <div className="feature-pill">Shop provisioning</div>
+          <div className="feature-pill">Subscription control</div>
+          <div className="feature-pill">Failure retry queue</div>
+        </div>
+      </section>
+
+      <section className="card auth-card">
+        <div className="card-kicker">Secure access</div>
+        <h2>Admin Login</h2>
+        <p className="muted">Use your admin username and password to access the console.</p>
+        {msg && <div className="msg">{msg}</div>}
+        <form className="stack-form" onSubmit={submit}>
+          <label>Username</label>
+          <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="ADMIN" autoComplete="username" />
+          <label>Password</label>
+          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter password" autoComplete="current-password" />
+          <button disabled={loading}>{loading? 'Signing in...':'Sign In'}</button>
+        </form>
+      </section>
     </div>
   )
 }
