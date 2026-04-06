@@ -24,7 +24,10 @@ window.addEventListener('DOMContentLoaded', async () => {
         } else if (data.status === 'offline') {
             document.getElementById('statusBadge').textContent = 'Offline';
             document.getElementById('statusBadge').className = 'status offline';
-            showMessage('Backend polling is offline.', 'error');
+            const parts = [data.message || 'Backend polling is offline.'];
+            if (data.statusCode) parts.push(`status ${data.statusCode}`);
+            if (data.requestId) parts.push(`request ${data.requestId}`);
+            showMessage(parts.join(' | '), 'error');
         }
     });
     
@@ -174,7 +177,10 @@ async function saveAndStart() {
         if (isAuth) {
             showMessage('please make sure you have entered correct shop name and password', 'error');
         } else {
-            showMessage('Error: ' + saveResult.message, 'error');
+            const parts = ['Error: ' + saveResult.message];
+            if (saveResult.status) parts.push(`status ${saveResult.status}`);
+            if (saveResult.requestId) parts.push(`request ${saveResult.requestId}`);
+            showMessage(parts.join(' | '), 'error');
         }
         return;
     }

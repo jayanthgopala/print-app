@@ -11,6 +11,7 @@ const POLL_INTERVAL_MS = 4000;
 const JOB_BATCH_LIMIT = 20;
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 const store = new Store();
+const LOG_FILE_NAME = 'pc-app.log';
 
 let mainWindow = null;
 let pollTimer = null;
@@ -21,7 +22,7 @@ loadLocalEnv(path.join(__dirname, '.env'));
 app.setAppUserModelId(APP_ID);
 
 function apiUrl() {
-    return (process.env.API_URL || DEFAULT_API_URL).replace(/\/$/, '');
+    return normalizeBaseUrl(process.env.API_URL, DEFAULT_API_URL);
 }
 
 function loadLocalEnv(envPath) {
@@ -52,6 +53,63 @@ function createWindow() {
     Menu.setApplicationMenu(null);
     mainWindow.loadFile('index.html');
     mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+function getLogFilePath() {
+    try {
+        return path.join(app.getPath('userData'), LOG_FILE_NAME);
+    } catch (_error) {
+        return path.join(__dirname, LOG_FILE_NAME);
+    }
+}
+
+function logAppEvent(level, message, details = {}) {
+    const entry = {
+        timestamp: new Date().toISOString(),
+        level,
+        message,
+        ...details
+    };
+    const line = `${JSON.stringify(entry)}\n`;
+    const logMethod = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+    logMethod('[pc-app]', entry);
+    try {
+        fs.mkdirSync(path.dirname(getLogFilePath()), { recursive: true });
+        fs.appendFileSync(getLogFilePath(), line, 'utf8');
+    } catch (error) {
+        console.error('[pc-app] failed_to_write_log', error);
+    }
+}
+
+async function readResponseDetails(response) {
+    const requestId = response.headers.get('x-request-id') || response.headers.get('cf-ray') || '';
+    const contentType = response.headers.get('content-type') || '';
+    const bodyText = await response.clone().text().catch(() => '');
+    let payload = null;
+    if (bodyText && contentType.toLowerCase().includes('application/json')) {
+        payload = safeJsonParse(bodyText);
+    } else if (bodyText) {
+        payload = safeJsonParse(bodyText);
+    }
+    return {
+        status: response.status,
+        ok: response.ok,
+        requestId,
+        bodyText,
+        payload: payload && typeof payload === 'object' ? payload : null
+    };
+}
+
+function safeJsonParse(value) {
+    try {
+        return JSON.parse(value);
+    } catch (_error) {
+        return null;
+    }
+}
+
+function getErrorMessageFromResponse(details, fallback) {
+    return details.payload?.error || details.payload?.message || details.bodyText || fallback;
 }
 
 function getAppIconPath() {
@@ -93,13 +151,36 @@ ipcMain.handle('save-settings', async (_event, settings) => {
                 password: settings.password || ''
             })
         });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || !payload.token) {
-            return { success: false, message: payload.error || 'Login failed' };
+        const details = await readResponseDetails(response);
+        if (!details.ok || !details.payload?.token) {
+            logAppEvent('error', 'shop_token_failed', {
+                url: `${apiUrl()}/auth/shop-token`,
+                status: details.status,
+                requestId: details.requestId,
+                responseBody: details.bodyText,
+                shopId: normalizeShopCode(settings.shopId)
+            });
+            return {
+                success: false,
+                message: getErrorMessageFromResponse(details, 'Login failed'),
+                status: details.status,
+                requestId: details.requestId
+            };
         }
-        store.set('shopToken', payload.token);
-        return { success: true, token: payload.token, shopToken: payload.token };
+        store.set('shopToken', details.payload.token);
+        logAppEvent('info', 'shop_token_success', {
+            url: `${apiUrl()}/auth/shop-token`,
+            status: details.status,
+            requestId: details.requestId,
+            shopId: normalizeShopCode(settings.shopId)
+        });
+        return { success: true, token: details.payload.token, shopToken: details.payload.token };
     } catch (error) {
+        logAppEvent('error', 'shop_token_request_error', {
+            url: `${apiUrl()}/auth/shop-token`,
+            error: error.message,
+            shopId: normalizeShopCode(settings.shopId)
+        });
         return { success: false, message: error.message };
     }
 });
@@ -122,7 +203,7 @@ ipcMain.handle('get-printers', async () => {
 
 ipcMain.handle('generate-qr', async (_event, shopId) => {
     try {
-        const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+        const frontendUrl = normalizeBaseUrl(process.env.FRONTEND_URL, '');
         if (!frontendUrl) return { success: false, message: 'FRONTEND_URL not set' };
         const qrDataUrl = await QRCode.toDataURL(`${frontendUrl}?shop=${normalizeShopCode(shopId)}`, { width: 300 });
         return { success: true, qrDataUrl };
@@ -154,7 +235,15 @@ ipcMain.handle('start-service', async () => {
     const token = store.get('shopToken', '');
     if (!shopId || !token) return { success: false, message: 'Missing credentials' };
     stopPolling();
-    await pollJobs();
+    const firstPoll = await pollJobs();
+    if (firstPoll && firstPoll.success === false) {
+        sendServiceStatus('offline', {
+            message: firstPoll.message,
+            requestId: firstPoll.requestId || '',
+            statusCode: firstPoll.status || 0
+        });
+        return firstPoll;
+    }
     pollTimer = setInterval(() => { void pollJobs(); }, POLL_INTERVAL_MS);
     sendServiceStatus('online');
     return { success: true, config: { shopId, token, status: 'online', batchLimit: JOB_BATCH_LIMIT }, message: 'Polling backend for jobs.' };
@@ -183,12 +272,23 @@ async function pollJobs() {
     try {
         const shopId = normalizeShopCode(store.get('shopId', ''));
         const token = store.get('shopToken', '');
-        if (!shopId || !token) return;
+        if (!shopId || !token) return { success: false, message: 'Missing credentials' };
         const response = await fetchWithRetry(`${apiUrl()}/jobs/${encodeURIComponent(shopId)}?limit=${JOB_BATCH_LIMIT}`, {
             headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
         });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || !Array.isArray(payload.jobs)) return;
+        const details = await readResponseDetails(response);
+        if (!details.ok || !Array.isArray(details.payload?.jobs)) {
+            const message = getErrorMessageFromResponse(details, 'Failed to fetch jobs');
+            logAppEvent('error', 'poll_jobs_failed', {
+                url: `${apiUrl()}/jobs/${encodeURIComponent(shopId)}?limit=${JOB_BATCH_LIMIT}`,
+                status: details.status,
+                requestId: details.requestId,
+                responseBody: details.bodyText,
+                shopId
+            });
+            return { success: false, message, status: details.status, requestId: details.requestId };
+        }
+        const payload = details.payload;
         for (const job of payload.jobs) {
             if (queuedJobs.has(job.id)) continue;
             try {
@@ -205,6 +305,13 @@ async function pollJobs() {
                 });
             }
         }
+        return { success: true, count: payload.jobs.length };
+    } catch (error) {
+        logAppEvent('error', 'poll_jobs_request_error', {
+            url: `${apiUrl()}/jobs/${encodeURIComponent(store.get('shopId', ''))}?limit=${JOB_BATCH_LIMIT}`,
+            error: error.message
+        });
+        return { success: false, message: error.message };
     } finally {
         polling = false;
     }
@@ -256,9 +363,29 @@ async function postToBackend(pathname, payload) {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(payload || {})
         });
-        const body = await response.json().catch(() => ({}));
-        return response.ok ? { success: true, ...body } : { success: false, message: body.error || 'Request failed' };
+        const details = await readResponseDetails(response);
+        if (!details.ok) {
+            logAppEvent('error', 'backend_post_failed', {
+                url: `${apiUrl()}${pathname}`,
+                status: details.status,
+                requestId: details.requestId,
+                responseBody: details.bodyText,
+                payload
+            });
+            return {
+                success: false,
+                message: getErrorMessageFromResponse(details, 'Request failed'),
+                status: details.status,
+                requestId: details.requestId
+            };
+        }
+        return { success: true, ...(details.payload || {}) };
     } catch (error) {
+        logAppEvent('error', 'backend_post_request_error', {
+            url: `${apiUrl()}${pathname}`,
+            error: error.message,
+            payload
+        });
         return { success: false, message: error.message };
     }
 }
@@ -269,12 +396,22 @@ async function fetchWithRetry(url, options) {
         try {
             const response = await fetch(url, options);
             if (response.status >= 500 && attempt < RETRY_DELAYS_MS.length) {
+                logAppEvent('warn', 'fetch_retrying_after_server_error', {
+                    url,
+                    status: response.status,
+                    attempt: attempt + 1
+                });
                 await delay(withJitter(RETRY_DELAYS_MS[attempt]));
                 continue;
             }
             return response;
         } catch (error) {
             lastError = error;
+            logAppEvent('warn', 'fetch_retrying_after_network_error', {
+                url,
+                error: error.message,
+                attempt: attempt + 1
+            });
             if (attempt >= RETRY_DELAYS_MS.length) break;
             await delay(withJitter(RETRY_DELAYS_MS[attempt]));
         }
@@ -361,6 +498,13 @@ function saveReceivedFile(downloadPath, filename, buffer) {
 
 function normalizeShopCode(value) {
     return String(value || '').trim().replace(/[<>]/g, '').toUpperCase();
+}
+
+function normalizeBaseUrl(value, fallback = '') {
+    const raw = String(value || fallback || '').trim();
+    if (!raw) return '';
+    const withProtocol = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(raw) ? raw : `https://${raw}`;
+    return withProtocol.replace(/\/+$/, '');
 }
 
 function normalizePageRanges(value) {

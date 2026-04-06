@@ -1,5 +1,6 @@
-const DEFAULT_API_URL = 'https://backend.buildergrids.tech';
-const BASE = (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(/\/$/, '');
+import { API_URL } from '../config';
+
+const BASE = API_URL;
 
 export async function apiPost(path, body, token){
   const headers = { 'Content-Type': 'application/json' }
