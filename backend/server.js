@@ -161,6 +161,8 @@ async function handleShopToken(request, env, requestId) {
             return json({ error: 'Subscription expired', request_id: requestId }, 403, request, env);
         }
 
+        await touchShopHeartbeat(db, shop.shop_code);
+
         const token = await signJwt({
             type: 'SHOP',
             shopId: shop.id,
