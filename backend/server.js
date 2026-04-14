@@ -9,7 +9,6 @@ const MAX_RETRIES = 5;
 const STUCK_JOB_TIMEOUT_MINUTES = 15;
 const UPLOAD_TICKET_TTL_SECONDS = 10 * 60;
 const PUBLIC_SHOP_CACHE_TTL_SECONDS = 30;
-const SHOP_ONLINE_WINDOW_SECONDS = 60;
 const ALLOWED_FILE_TYPES = new Set([
     'application/pdf',
     'application/msword',
@@ -96,6 +95,10 @@ export default {
                 return await withRequestLogging(request, env, ctx, baseLog, () => handleClaimJobs(shopCode, request, env, ctx, requestId));
             }
 
+            if (request.method === 'POST' && url.pathname === '/shop/presence') {
+                return await withRequestLogging(request, env, ctx, baseLog, () => handleShopPresence(request, env, requestId));
+            }
+
             if (request.method === 'POST' && url.pathname === '/job/update-status') {
                 return await withRequestLogging(request, env, ctx, baseLog, () => handleUpdateJobStatus(request, env, ctx, requestId));
             }
@@ -134,7 +137,7 @@ async function handlePublicShopLookup(shopCode, request, env, ctx, requestId) {
             shop: {
                 code: shop.shop_code,
                 name: shop.shop_name,
-                status: isShopOnline(shop.last_seen_at) ? 'online' : 'offline',
+                status: shop.is_online ? 'online' : 'offline',
                 colorPrice: shop.color_price,
                 bwPrice: shop.bw_price
             }
@@ -457,6 +460,23 @@ async function handleCreateJob(request, env, ctx, requestId) {
         ));
 
         return json({ request_id: requestId, success: true, job: result.rows[0] }, 200, request, env);
+    } finally {
+        await db.end();
+    }
+}
+
+async function handleShopPresence(request, env, requestId) {
+    const auth = await requireShopAuth(request, env, requestId);
+    if (auth.errorResponse) return auth.errorResponse;
+
+    const body = await readJson(request, env, requestId);
+    if (body.errorResponse) return body.errorResponse;
+
+    const nextStatus = requireEnum(String(body.data.status || '').trim().toLowerCase(), 'status', ['online', 'offline']);
+    const db = await createDbClient(env);
+    try {
+        await setShopPresence(db, auth.shopCode, nextStatus === 'online');
+        return json({ request_id: requestId, success: true, status: nextStatus }, 200, request, env);
     } finally {
         await db.end();
     }
@@ -791,7 +811,7 @@ async function createDbClient(env) {
 
 async function getShopByCode(db, shopCode) {
     const result = await db.query(
-        `SELECT id, shop_code, shop_name, password_hash, color_price, bw_price, subscription_end, last_seen_at, created_at, updated_at
+        `SELECT id, shop_code, shop_name, password_hash, color_price, bw_price, subscription_end, is_online, last_seen_at, created_at, updated_at
          FROM shops
          WHERE shop_code = $1
          LIMIT 1`,
@@ -810,11 +830,26 @@ async function touchShopHeartbeat(db, shopCode) {
     );
 }
 
-function isShopOnline(lastSeenAt) {
-    if (!lastSeenAt) return false;
-    const seenAtMs = new Date(lastSeenAt).getTime();
-    if (!Number.isFinite(seenAtMs)) return false;
-    return (Date.now() - seenAtMs) <= (SHOP_ONLINE_WINDOW_SECONDS * 1000);
+async function setShopPresence(db, shopCode, isOnline) {
+    if (isOnline) {
+        await db.query(
+            `UPDATE shops
+             SET is_online = TRUE,
+                 last_seen_at = NOW(),
+                 updated_at = NOW()
+             WHERE shop_code = $1`,
+            [shopCode]
+        );
+        return;
+    }
+
+    await db.query(
+        `UPDATE shops
+         SET is_online = FALSE,
+             updated_at = NOW()
+         WHERE shop_code = $1`,
+        [shopCode]
+    );
 }
 
 function buildObjectKey(shopCode, fileName) {

@@ -17,6 +17,8 @@ const LOG_FILE_NAME = 'pc-app.log';
 let mainWindow = null;
 let pollTimer = null;
 let polling = false;
+let isQuitting = false;
+let isClosePromptOpen = false;
 const queuedJobs = new Map();
 
 loadLocalEnv(path.join(__dirname, '.env'));
@@ -53,6 +55,11 @@ function createWindow() {
     });
     Menu.setApplicationMenu(null);
     mainWindow.loadFile('index.html');
+    mainWindow.on('close', (event) => {
+        if (isQuitting) return;
+        event.preventDefault();
+        void confirmAndCloseApp();
+    });
     mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -120,7 +127,10 @@ function getAppIconPath() {
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', stopPolling);
+app.on('before-quit', () => {
+    isQuitting = true;
+    stopPolling();
+});
 
 ipcMain.handle('get-settings', () => ({
     shopId: store.get('shopId', ''),
@@ -245,6 +255,21 @@ ipcMain.handle('start-service', async () => {
         });
         return firstPoll;
     }
+    const presenceResult = await markShopPresence('online');
+    if (!presenceResult.success) {
+        stopPolling();
+        sendServiceStatus('offline', {
+            message: presenceResult.message,
+            requestId: presenceResult.requestId || '',
+            statusCode: presenceResult.status || 0
+        });
+        return {
+            success: false,
+            message: presenceResult.message || 'Failed to update shop presence',
+            requestId: presenceResult.requestId || '',
+            status: presenceResult.status || 0
+        };
+    }
     pollTimer = setInterval(() => { void pollJobs(); }, POLL_INTERVAL_MS);
     sendServiceStatus('online');
     return { success: true, config: { shopId, token, status: 'online', batchLimit: JOB_BATCH_LIMIT }, message: 'Polling backend for jobs.' };
@@ -266,6 +291,33 @@ ipcMain.handle('complete-job', async (_event, payload) => {
 ipcMain.handle('print-file', async (_event, filePath, options) => printFile(filePath, options));
 ipcMain.handle('open-native-print-dialog', async () => ({ success: false, message: 'Native print dialog is not used in the new flow.' }));
 ipcMain.handle('delete-file', async (_event, filePath) => deleteFile(filePath));
+
+async function confirmAndCloseApp() {
+    if (!mainWindow || isClosePromptOpen) return;
+    isClosePromptOpen = true;
+    try {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+            type: 'question',
+            buttons: ['Yes', 'No'],
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+            title: 'Close App',
+            message: 'Do you want to close the app?',
+            detail: 'If you continue, the shop will be marked offline.'
+        });
+
+        if (response !== 0) return;
+
+        await shutdownShopSession({ markOffline: true });
+        isQuitting = true;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.destroy();
+        }
+    } finally {
+        isClosePromptOpen = false;
+    }
+}
 
 async function pollJobs() {
     if (polling) return;
@@ -352,8 +404,36 @@ function stopPolling() {
     polling = false;
 }
 
+async function shutdownShopSession({ markOffline = false } = {}) {
+    stopPolling();
+    if (!markOffline) return { success: true };
+
+    const result = await markShopPresence('offline');
+    if (!result.success) {
+        logAppEvent('warn', 'shop_presence_offline_failed', {
+            message: result.message,
+            status: result.status,
+            requestId: result.requestId
+        });
+    }
+    return result;
+}
+
 function sendServiceStatus(status, extra = {}) {
     if (mainWindow) mainWindow.webContents.send('tunnel-status', { status, ...extra });
+}
+
+async function markShopPresence(status) {
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    if (!['online', 'offline'].includes(normalizedStatus)) {
+        return { success: false, message: 'Invalid shop presence status' };
+    }
+
+    const shopId = normalizeShopCode(store.get('shopId', ''));
+    const token = store.get('shopToken', '');
+    if (!shopId || !token) return { success: true, skipped: true };
+
+    return postToBackend('/shop/presence', { status: normalizedStatus });
 }
 
 async function postToBackend(pathname, payload) {
