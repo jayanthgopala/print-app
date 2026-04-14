@@ -268,10 +268,14 @@ export default function App() {
             console.error('Transfer failed:', error);
             setStatus('ERROR');
             setErrorMessage(error.message || 'Transfer failed.');
-            setInfoMessage('');
+            setInfoMessage('Transfer stopped. Retry only when you are ready.');
         } finally {
             setIsSending(false);
         }
+    };
+
+    const handleRetrySend = () => {
+        void handleSend();
     };
 
     const showConnectedPanel = ['ONLINE', 'CONNECTING', 'TRANSFERRING', 'COMPLETED', 'ERROR'].includes(status);
@@ -578,9 +582,15 @@ export default function App() {
                             </div>
                         )}
 
-                        {files.length > 0 && (
+                        {files.length > 0 && status !== 'ERROR' && (
                             <button onClick={handleSend} className="btn-primary" disabled={!canSend}>
                                 {isSending ? `Sending ${currentFile || 1}/${files.length}` : `Send ${files.length} File${files.length > 1 ? 's' : ''} to Print`}
+                            </button>
+                        )}
+
+                        {status === 'ERROR' && files.length > 0 && (
+                            <button onClick={handleRetrySend} className="btn-primary" disabled={!canSend} style={{ marginTop: '10px' }}>
+                                Retry Send
                             </button>
                         )}
 

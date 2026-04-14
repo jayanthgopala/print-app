@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { randomInt } = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -300,7 +301,7 @@ async function pollJobs() {
                 console.error('Job download failed:', job.id, error);
                 await postToBackend('/job/update-status', {
                     jobId: job.id,
-                    status: 'pending',
+                    status: 'failed',
                     error: `download_failed:${error.message || 'unknown'}`
                 });
             }
@@ -428,9 +429,11 @@ function withJitter(baseMs) {
 }
 
 function secureRandomInt(maxExclusive) {
-    const values = new Uint32Array(1);
-    globalThis.crypto.getRandomValues(values);
-    return Number(values[0] % maxExclusive);
+    const limit = Number(maxExclusive);
+    if (!Number.isInteger(limit) || limit <= 0) {
+        throw new Error('secureRandomInt requires a positive integer');
+    }
+    return randomInt(limit);
 }
 
 async function printFile(filePath, options) {

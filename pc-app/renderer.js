@@ -566,10 +566,10 @@ async function confirmPrint() {
             closePrintModal();
         } else {
             alert('No pages were printed');
-            await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'pending' });
+            await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'failed', error: 'print_skipped:no_pages_selected' });
         }
     } catch (error) {
-        await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'pending' });
+        await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'failed', error: `print_failed:${error.message}` });
         alert('Print error: ' + error.message);
     }
 }

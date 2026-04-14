@@ -9,6 +9,7 @@ const MAX_RETRIES = 5;
 const STUCK_JOB_TIMEOUT_MINUTES = 15;
 const UPLOAD_TICKET_TTL_SECONDS = 10 * 60;
 const PUBLIC_SHOP_CACHE_TTL_SECONDS = 30;
+const SHOP_ONLINE_WINDOW_SECONDS = 45;
 const ALLOWED_FILE_TYPES = new Set([
     'application/pdf',
     'application/msword',
@@ -138,7 +139,7 @@ async function handlePublicShopLookup(shopCode, request, env, ctx, requestId) {
             shop: {
                 code: shop.shop_code,
                 name: shop.shop_name,
-                status: 'online',
+                status: isShopOnline(shop.last_seen_at) ? 'online' : 'offline',
                 colorPrice: shop.color_price,
                 bwPrice: shop.bw_price
             }
@@ -472,6 +473,7 @@ async function handleClaimJobs(shopCode, request, env, ctx, requestId) {
     const db = await createDbClient(env);
     try {
         await enforceRateLimit(db, request, '/jobs', auth.shopCode, requestId);
+        await touchShopHeartbeat(db, auth.shopCode);
         const jobs = await retryWithBackoff(() => claimPendingJobs(db, auth.shopCode, requestId, auth.shopCode, env));
         return json({ request_id: requestId, jobs, limit: JOB_FETCH_LIMIT }, 200, request, env);
     } finally {
@@ -542,7 +544,7 @@ async function claimPendingJobs(db, shopCode, requestId, userId, env) {
     try {
         const stale = await db.query(
             `UPDATE jobs
-             SET status = CASE WHEN retry_count + 1 >= $2 THEN 'failed' ELSE 'pending' END,
+             SET status = 'failed',
                  retry_count = retry_count + 1,
                  last_attempt_at = NOW(),
                  last_error = 'job_timeout',
@@ -552,7 +554,7 @@ async function claimPendingJobs(db, shopCode, requestId, userId, env) {
                AND last_attempt_at IS NOT NULL
                AND last_attempt_at < NOW() - INTERVAL '${STUCK_JOB_TIMEOUT_MINUTES} minutes'
              RETURNING id, status, retry_count`,
-            [shopCode, MAX_RETRIES]
+            [shopCode]
         );
 
         for (const row of stale.rows) {
@@ -560,7 +562,7 @@ async function claimPendingJobs(db, shopCode, requestId, userId, env) {
                 requestId,
                 jobId: row.id,
                 userId,
-                error: row.status === 'failed' ? 'job_timeout_dead_lettered' : 'job_timeout_reset'
+                error: 'job_timeout_dead_lettered'
             });
         }
 
@@ -636,7 +638,10 @@ async function transitionJobStatus(db, { jobId, shopCode, nextStatus, requestId,
         if (nextStatus === 'pending') {
             retryCount += 1;
             lastError = errorText || 'job_processing_failed';
-            finalStatus = retryCount >= MAX_RETRIES ? 'failed' : 'pending';
+            finalStatus = 'failed';
+        } else if (nextStatus === 'failed') {
+            retryCount += 1;
+            lastError = errorText || 'job_processing_failed';
         } else if (!isAllowedTransition(currentStatus, nextStatus)) {
             await db.query('ROLLBACK');
             return { found: true, invalidTransition: true, job: { id: current.id, status: currentStatus } };
@@ -791,13 +796,30 @@ async function createDbClient(env) {
 
 async function getShopByCode(db, shopCode) {
     const result = await db.query(
-        `SELECT id, shop_code, shop_name, password_hash, color_price, bw_price, subscription_end, created_at, updated_at
+        `SELECT id, shop_code, shop_name, password_hash, color_price, bw_price, subscription_end, last_seen_at, created_at, updated_at
          FROM shops
          WHERE shop_code = $1
          LIMIT 1`,
         [shopCode]
     );
     return result.rows[0] || null;
+}
+
+async function touchShopHeartbeat(db, shopCode) {
+    await db.query(
+        `UPDATE shops
+         SET last_seen_at = NOW(),
+             updated_at = NOW()
+         WHERE shop_code = $1`,
+        [shopCode]
+    );
+}
+
+function isShopOnline(lastSeenAt) {
+    if (!lastSeenAt) return false;
+    const seenAtMs = new Date(lastSeenAt).getTime();
+    if (!Number.isFinite(seenAtMs)) return false;
+    return (Date.now() - seenAtMs) <= (SHOP_ONLINE_WINDOW_SECONDS * 1000);
 }
 
 function buildObjectKey(shopCode, fileName) {

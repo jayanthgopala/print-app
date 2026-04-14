@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS shops (
     color_price NUMERIC(10, 2),
     bw_price NUMERIC(10, 2),
     subscription_end TIMESTAMPTZ,
+    last_seen_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -72,6 +73,7 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS content_type TEXT;
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 
 -- Insert queries
 INSERT INTO admins (id, username, password_hash) VALUES ($1, $2, $3);
