@@ -141,7 +141,7 @@ export default function App() {
         setShopId(normalizedShopId);
 
         try {
-            const response = await fetch(`${API_URL}/shop/public/${encodeURIComponent(normalizedShopId)}`);
+            const response = await fetch(`${API_URL}/shop/public/${encodeURIComponent(normalizedShopId)}`, { cache: 'no-store' });
             const data = await response.json().catch(() => ({}));
 
             if (!response.ok) {

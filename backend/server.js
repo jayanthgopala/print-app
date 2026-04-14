@@ -123,18 +123,13 @@ async function withRequestLogging(request, env, ctx, baseLog, handler) {
 
 async function handlePublicShopLookup(shopCode, request, env, ctx, requestId) {
     const normalizedShopCode = requireShopCode(shopCode);
-    const cache = caches.default;
-    const cacheKey = new Request(new URL(`/shop/public/${normalizedShopCode}`, request.url).toString(), { method: 'GET' });
-    const cached = await cache.match(cacheKey);
-    if (cached) return withResponseHeader(cached, 'x-request-id', requestId);
-
     const db = await createDbClient(env);
     try {
         const shop = await getShopByCode(db, normalizedShopCode);
         if (!shop) return json({ error: 'Shop not found', request_id: requestId }, 404, request, env);
         if (isExpired(shop.subscription_end)) return json({ error: 'Subscription expired', request_id: requestId }, 403, request, env);
 
-        const response = json({
+        return json({
             request_id: requestId,
             shop: {
                 code: shop.shop_code,
@@ -143,9 +138,7 @@ async function handlePublicShopLookup(shopCode, request, env, ctx, requestId) {
                 colorPrice: shop.color_price,
                 bwPrice: shop.bw_price
             }
-        }, 200, request, env, { 'Cache-Control': `public, max-age=${PUBLIC_SHOP_CACHE_TTL_SECONDS}` });
-        ctx.waitUntil(cache.put(cacheKey, response.clone()));
-        return response;
+        }, 200, request, env, { 'Cache-Control': 'no-store, no-cache, must-revalidate' });
     } finally {
         await db.end();
     }
