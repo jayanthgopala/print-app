@@ -24,10 +24,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         } else if (data.status === 'offline') {
             document.getElementById('statusBadge').textContent = 'Offline';
             document.getElementById('statusBadge').className = 'status offline';
-            const parts = [data.message || 'Backend polling is offline.'];
-            if (data.statusCode) parts.push(`status ${data.statusCode}`);
-            if (data.requestId) parts.push(`request ${data.requestId}`);
-            showMessage(parts.join(' | '), 'error');
+            showMessage(formatUserFacingError(data), 'error');
         }
     });
     
@@ -176,11 +173,10 @@ async function saveAndStart() {
         const isAuth = authIndicators.some(ind => msg.includes(ind));
         if (isAuth) {
             showMessage('please make sure you have entered correct shop name and password', 'error');
+        } else if (isSubscriptionExpired(saveResult)) {
+            showMessage('Subscription expired. Please renew your plan.', 'error');
         } else {
-            const parts = ['Error: ' + saveResult.message];
-            if (saveResult.status) parts.push(`status ${saveResult.status}`);
-            if (saveResult.requestId) parts.push(`request ${saveResult.requestId}`);
-            showMessage(parts.join(' | '), 'error');
+            showMessage(formatUserFacingError(saveResult, { prefixError: true }), 'error');
         }
         return;
     }
@@ -264,6 +260,19 @@ async function printQR() {
     } else {
         showMessage('Error printing QR: ' + result.message, 'error');
     }
+}
+
+function isSubscriptionExpired(details) {
+    const message = String(details?.message || '').toLowerCase();
+    return details?.status === 403 && message.includes('subscription expired');
+}
+
+function formatUserFacingError(details, options = {}) {
+    if (isSubscriptionExpired(details)) {
+        return 'Subscription expired. Please renew your plan.';
+    }
+    const message = String(details?.message || '').trim() || 'Request failed';
+    return options.prefixError ? `Error: ${message}` : message;
 }
 
 function showMessage(text, type = 'error', autoHideMs = 0) {
