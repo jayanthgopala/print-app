@@ -9,7 +9,7 @@ const MAX_RETRIES = 5;
 const STUCK_JOB_TIMEOUT_MINUTES = 15;
 const UPLOAD_TICKET_TTL_SECONDS = 10 * 60;
 const PUBLIC_SHOP_CACHE_TTL_SECONDS = 30;
-const SHOP_ONLINE_WINDOW_SECONDS = 45;
+const SHOP_ONLINE_WINDOW_SECONDS = 60;
 const ALLOWED_FILE_TYPES = new Set([
     'application/pdf',
     'application/msword',
