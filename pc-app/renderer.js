@@ -473,6 +473,13 @@ async function confirmPrint() {
     if (!currentPrintJob) return;
 
     const { filePath, orderId, order } = currentPrintJob;
+    console.log('confirmPrint:start', {
+        filePath,
+        orderId,
+        jobId: order.jobId,
+        colorPrinter,
+        bwPrinter
+    });
 
     // Get edited page ranges
     const colorPages = document.getElementById('editColorPages').value.trim();
@@ -501,6 +508,15 @@ async function confirmPrint() {
 
     try {
         const results = [];
+        const failures = [];
+
+        if (colorPages && !colorPrinter) {
+            throw new Error('Color printer is not selected in settings.');
+        }
+
+        if (bwPages && !bwPrinter) {
+            throw new Error('B&W printer is not selected in settings.');
+        }
 
         const markPrinting = await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'printing' });
         if (!markPrinting.success) {
@@ -509,6 +525,14 @@ async function confirmPrint() {
 
         // Print color pages if specified
         if (colorPages && colorPrinter) {
+            console.log('confirmPrint:colorPrint', {
+                filePath,
+                printerName: colorPrinter,
+                pageRanges: normalizedColorPages,
+                paperSize,
+                orientation,
+                copies
+            });
             const result = await window.electronAPI.printFile(filePath, {
                 printerName: colorPrinter,
                 isColor: true,
@@ -519,11 +543,24 @@ async function confirmPrint() {
                 duplex,
                 scale
             });
-            results.push(`Color ${describePrintSelection(normalizedColorPages)}: ${result.success ? 'Sent to printer' : result.message}`);
+            if (result.success) {
+                results.push(`Color ${describePrintSelection(normalizedColorPages)}: ${result.message || 'Sent to printer'}`);
+            } else {
+                failures.push(`Color ${describePrintSelection(normalizedColorPages)}: ${result.message || 'Print failed'}`);
+            }
+            console.log('confirmPrint:colorPrintResult', result);
         }
 
         // Print B&W pages if specified
         if (bwPages && bwPrinter) {
+            console.log('confirmPrint:bwPrint', {
+                filePath,
+                printerName: bwPrinter,
+                pageRanges: normalizedBWPages,
+                paperSize,
+                orientation,
+                copies
+            });
             const result = await window.electronAPI.printFile(filePath, {
                 printerName: bwPrinter,
                 isColor: false,
@@ -534,7 +571,16 @@ async function confirmPrint() {
                 duplex,
                 scale
             });
-            results.push(`B&W ${describePrintSelection(normalizedBWPages)}: ${result.success ? 'Sent to printer' : result.message}`);
+            if (result.success) {
+                results.push(`B&W ${describePrintSelection(normalizedBWPages)}: ${result.message || 'Sent to printer'}`);
+            } else {
+                failures.push(`B&W ${describePrintSelection(normalizedBWPages)}: ${result.message || 'Print failed'}`);
+            }
+            console.log('confirmPrint:bwPrintResult', result);
+        }
+
+        if (failures.length > 0) {
+            throw new Error(failures.join('\n'));
         }
 
         // Show results
@@ -542,9 +588,9 @@ async function confirmPrint() {
             alert('Print Job Queued!\n\n' + results.join('\n') + '\n\n⏳ Large print jobs may take a few minutes to process.\nYou can continue working while printing happens in the background.');
 
             // Mark order as printed
-            const order = orders.find(o => o.id === orderId);
-            if (order) {
-                order.printed = true;
+            const queuedOrder = orders.find((item) => item.id === orderId);
+            if (queuedOrder) {
+                queuedOrder.printed = true;
             }
 
             const completeResult = await window.electronAPI.completeJob({ jobId: order.jobId });

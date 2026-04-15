@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const { randomInt } = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const Store = require('electron-store');
 const QRCode = require('qrcode');
 const pdfPrinter = require('pdf-to-printer');
@@ -288,7 +289,17 @@ ipcMain.handle('complete-job', async (_event, payload) => {
     return result;
 });
 
-ipcMain.handle('print-file', async (_event, filePath, options) => printFile(filePath, options));
+ipcMain.handle('print-file', async (_event, filePath, options) => {
+    logAppEvent('info', 'print_file_ipc_received', {
+        filePath,
+        printerName: options?.printerName || '',
+        isColor: options?.isColor !== false,
+        pageRanges: options?.pageRanges || '',
+        paperSize: options?.paperSize || 'A4',
+        orientation: options?.orientation || 'portrait'
+    });
+    return printFile(filePath, options);
+});
 ipcMain.handle('open-native-print-dialog', async () => ({ success: false, message: 'Native print dialog is not used in the new flow.' }));
 ipcMain.handle('delete-file', async (_event, filePath) => deleteFile(filePath));
 
@@ -521,7 +532,17 @@ async function printFile(filePath, options) {
         const normalizedPath = path.normalize(filePath);
         if (!fs.existsSync(normalizedPath)) return { success: false, message: 'File not found' };
         const printerName = options.printerName || '';
+        if (!printerName) return { success: false, message: 'Printer not selected' };
         const ext = path.extname(normalizedPath).toLowerCase();
+        logAppEvent('info', 'print_file_start', {
+            filePath: normalizedPath,
+            printerName,
+            ext,
+            isVirtualPdfPrinter: isVirtualPdfPrinter(printerName)
+        });
+        if (isVirtualPdfPrinter(printerName)) {
+            return await printWithDialog(normalizedPath, options);
+        }
         if (ext === '.pdf') {
             const printOptions = { printer: printerName, copies: Math.max(1, Number(options.copies || 1)), paperSize: options.paperSize || 'A4' };
             const pageRanges = normalizePageRanges(options.pageRanges || '');
@@ -530,11 +551,19 @@ async function printFile(filePath, options) {
             if (options.duplex === 'long-edge') printOptions.side = 'duplexlong';
             if (options.duplex === 'short-edge') printOptions.side = 'duplexshort';
             if (options.scale === 'actual') printOptions.scale = 'noscale';
+            logAppEvent('info', 'print_pdf_start', {
+                filePath: normalizedPath,
+                printerName,
+                printOptions
+            });
             await pdfPrinter.print(normalizedPath, printOptions);
             return { success: true, message: `Print job sent to ${printerName}` };
         }
+        if (isOfficeDocument(normalizedPath)) {
+            return { success: false, message: 'DOC and DOCX printing is not supported directly in the desktop app yet. Convert to PDF first.' };
+        }
         const printWindow = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } });
-        await printWindow.loadURL(`file://${normalizedPath}`);
+        await loadPrintablePreview(printWindow, normalizedPath, options);
         return await new Promise((resolve) => {
             printWindow.webContents.print({
                 silent: true,
@@ -550,8 +579,131 @@ async function printFile(filePath, options) {
             });
         });
     } catch (error) {
+        logAppEvent('error', 'print_file_failed', {
+            filePath,
+            printerName: options?.printerName || '',
+            error: error.message
+        });
         return { success: false, message: error.message };
     }
+}
+
+async function printWithDialog(filePath, options) {
+    const printerName = options?.printerName || '';
+    const printWindow = new BrowserWindow({
+        show: true,
+        width: 960,
+        height: 720,
+        autoHideMenuBar: true,
+        webPreferences: { contextIsolation: true, nodeIntegration: false }
+    });
+    try {
+        logAppEvent('info', 'print_with_dialog_start', {
+            filePath,
+            printerName
+        });
+        if (isOfficeDocument(filePath)) {
+            if (!printWindow.isDestroyed()) printWindow.close();
+            return { success: false, message: 'DOC and DOCX printing is not supported directly in the desktop app yet. Convert to PDF first.' };
+        }
+        await loadPrintablePreview(printWindow, filePath, options);
+        return await new Promise((resolve) => {
+            printWindow.webContents.print({
+                silent: false,
+                printBackground: true,
+                deviceName: printerName,
+                color: options?.isColor !== false,
+                landscape: options?.orientation === 'landscape',
+                copies: Math.max(1, Number(options?.copies || 1)),
+                pageSize: options?.paperSize || 'A4'
+            }, (success, errorType) => {
+                printWindow.close();
+                if (success) {
+                    const message = isVirtualPdfPrinter(printerName)
+                        ? `Save dialog opened for ${printerName}`
+                        : `Print dialog completed for ${printerName}`;
+                    resolve({ success: true, message });
+                    return;
+                }
+                resolve({ success: false, message: errorType || 'Print dialog cancelled or failed' });
+            });
+        });
+    } catch (error) {
+        if (!printWindow.isDestroyed()) printWindow.close();
+        throw error;
+    }
+}
+
+function isVirtualPdfPrinter(printerName) {
+    const normalized = String(printerName || '').trim().toLowerCase();
+    return [
+        'microsoft print to pdf',
+        'save as pdf',
+        'adobe pdf',
+        'foxit reader pdf printer'
+    ].includes(normalized);
+}
+
+async function loadPrintablePreview(printWindow, filePath, options) {
+    const normalizedPath = path.normalize(filePath);
+    const ext = path.extname(normalizedPath).toLowerCase();
+    logAppEvent('info', 'load_printable_preview_start', {
+        filePath: normalizedPath,
+        ext,
+        paperSize: options?.paperSize || 'A4',
+        orientation: options?.orientation || 'portrait'
+    });
+    if (isImageFile(normalizedPath)) {
+        const imageUrl = pathToFileURL(normalizedPath).toString();
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+            html, body { margin: 0; padding: 0; background: white; }
+            body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+            .page { width: 100%; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+            img { max-width: 100%; max-height: 100vh; object-fit: ${options?.scale === 'actual' ? 'none' : 'contain'}; }
+            @page { size: ${escapeHtml(options?.paperSize || 'A4')} ${options?.orientation === 'landscape' ? 'landscape' : 'portrait'}; margin: 0; }
+        </style></head><body><div class="page"><img src="${imageUrl}" alt="Printable image"></div></body></html>`;
+        await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+        await printWindow.webContents.executeJavaScript(`
+            new Promise((resolve, reject) => {
+                const img = document.querySelector('img');
+                if (!img) {
+                    reject(new Error('Printable image element not found'));
+                    return;
+                }
+                if (img.complete && img.naturalWidth > 0) {
+                    resolve(true);
+                    return;
+                }
+                img.addEventListener('load', () => resolve(true), { once: true });
+                img.addEventListener('error', () => reject(new Error('Image could not be loaded for printing')), { once: true });
+            });
+        `);
+        logAppEvent('info', 'load_printable_preview_image_ready', {
+            filePath: normalizedPath
+        });
+        return;
+    }
+
+    if (ext === '.pdf') {
+        await printWindow.loadURL(pathToFileURL(normalizedPath).toString());
+        logAppEvent('info', 'load_printable_preview_pdf_ready', {
+            filePath: normalizedPath
+        });
+        return;
+    }
+
+    await printWindow.loadURL(pathToFileURL(normalizedPath).toString());
+    logAppEvent('info', 'load_printable_preview_file_ready', {
+        filePath: normalizedPath
+    });
+}
+
+function isImageFile(filePath) {
+    return ['.png', '.jpg', '.jpeg'].includes(path.extname(String(filePath || '')).toLowerCase());
+}
+
+function isOfficeDocument(filePath) {
+    return ['.doc', '.docx'].includes(path.extname(String(filePath || '')).toLowerCase());
 }
 
 async function deleteFile(filePath) {
