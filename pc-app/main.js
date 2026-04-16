@@ -540,9 +540,6 @@ async function printFile(filePath, options) {
             ext,
             isVirtualPdfPrinter: isVirtualPdfPrinter(printerName)
         });
-        if (isVirtualPdfPrinter(printerName)) {
-            return await printWithDialog(normalizedPath, options);
-        }
         if (ext === '.pdf') {
             const printOptions = { printer: printerName, copies: Math.max(1, Number(options.copies || 1)), paperSize: options.paperSize || 'A4' };
             const pageRanges = normalizePageRanges(options.pageRanges || '');
@@ -561,6 +558,9 @@ async function printFile(filePath, options) {
         }
         if (isOfficeDocument(normalizedPath)) {
             return { success: false, message: 'DOC and DOCX printing is not supported directly in the desktop app yet. Convert to PDF first.' };
+        }
+        if (isVirtualPdfPrinter(printerName)) {
+            return await printWithDialog(normalizedPath, options);
         }
         const printWindow = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } });
         await loadPrintablePreview(printWindow, normalizedPath, options);
@@ -591,7 +591,7 @@ async function printFile(filePath, options) {
 async function printWithDialog(filePath, options) {
     const printerName = options?.printerName || '';
     const printWindow = new BrowserWindow({
-        show: true,
+        show: false,
         width: 960,
         height: 720,
         autoHideMenuBar: true,
@@ -607,6 +607,30 @@ async function printWithDialog(filePath, options) {
             return { success: false, message: 'DOC and DOCX printing is not supported directly in the desktop app yet. Convert to PDF first.' };
         }
         await loadPrintablePreview(printWindow, filePath, options);
+
+        if (isVirtualPdfPrinter(printerName)) {
+            const pdfBuffer = await printWindow.webContents.printToPDF({
+                printBackground: true,
+                landscape: options?.orientation === 'landscape',
+                pageSize: options?.paperSize || 'A4',
+                margins: { top: 0, bottom: 0, left: 0, right: 0 }
+            });
+            if (!printWindow.isDestroyed()) printWindow.close();
+
+            const defaultName = path.parse(path.basename(filePath)).name + '_print.pdf';
+            const { canceled, filePath: savePath } = await dialog.showSaveDialog(mainWindow, {
+                title: 'Save Printed PDF',
+                defaultPath: path.join(app.getPath('downloads'), defaultName),
+                filters: [{ name: 'PDF', extensions: ['pdf'] }]
+            });
+            if (canceled || !savePath) {
+                return { success: false, message: 'Save cancelled' };
+            }
+            fs.writeFileSync(savePath, pdfBuffer);
+            logAppEvent('info', 'print_virtual_pdf_saved', { savePath });
+            return { success: true, message: `Saved to ${savePath}` };
+        }
+
         return await new Promise((resolve) => {
             printWindow.webContents.print({
                 silent: false,
@@ -617,12 +641,9 @@ async function printWithDialog(filePath, options) {
                 copies: Math.max(1, Number(options?.copies || 1)),
                 pageSize: options?.paperSize || 'A4'
             }, (success, errorType) => {
-                printWindow.close();
+                if (!printWindow.isDestroyed()) printWindow.close();
                 if (success) {
-                    const message = isVirtualPdfPrinter(printerName)
-                        ? `Save dialog opened for ${printerName}`
-                        : `Print dialog completed for ${printerName}`;
-                    resolve({ success: true, message });
+                    resolve({ success: true, message: `Print dialog completed for ${printerName}` });
                     return;
                 }
                 resolve({ success: false, message: errorType || 'Print dialog cancelled or failed' });
