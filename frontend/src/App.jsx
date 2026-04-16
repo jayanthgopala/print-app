@@ -25,6 +25,7 @@ export default function App() {
     const [progress, setProgress] = useState(0);
     const [currentFile, setCurrentFile] = useState(0);
     const [totalFiles, setTotalFiles] = useState(0);
+    const [sentFileCount, setSentFileCount] = useState(0);
     const [pricing, setPricing] = useState(null);
     const [installPrompt, setInstallPrompt] = useState(null);
     const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -262,12 +263,14 @@ export default function App() {
                 await createJobRecord(connectedShopId, item, uploadPlan);
                 await new Promise((resolve) => setTimeout(resolve, 400));
             }
+            setSentFileCount(files.length);
             setFiles([]);
             setCurrentFile(0);
             setTotalFiles(0);
             setProgress(100);
             setStatus('COMPLETED');
-            setInfoMessage('Files sent successfully.');
+            setInfoMessage('');
+            setErrorMessage('');
         } catch (error) {
             console.error('Transfer failed:', error);
             setStatus('ERROR');
@@ -282,7 +285,19 @@ export default function App() {
         void handleSend();
     };
 
-    const showConnectedPanel = ['ONLINE', 'CONNECTING', 'TRANSFERRING', 'COMPLETED', 'ERROR'].includes(status);
+    const handleSendMore = () => {
+        setFiles([]);
+        setCurrentFile(0);
+        setTotalFiles(0);
+        setSentFileCount(0);
+        setProgress(0);
+        setCustomerName('');
+        setErrorMessage('');
+        setInfoMessage('Shop is online. You can upload files now.');
+        setStatus('ONLINE');
+    };
+
+    const showConnectedPanel = ['ONLINE', 'CONNECTING', 'TRANSFERRING', 'ERROR'].includes(status);
     const canSend = !isSending && status !== 'OFFLINE' && customerName.trim() && files.length > 0;
 
     return (
@@ -610,6 +625,25 @@ export default function App() {
                             </div>
                         )}
                     </>
+                )}
+
+                {status === 'COMPLETED' && (
+                    <div className="success-page">
+                        <div className="success-icon">
+                            <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
+                                <circle cx="40" cy="40" r="40" fill="#d1fae5" />
+                                <path d="M24 42l10 10 22-24" stroke="#059669" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                            </svg>
+                        </div>
+                        <h2 className="success-title">Files Sent Successfully</h2>
+                        <p className="success-detail">
+                            {sentFileCount} {sentFileCount === 1 ? 'file has' : 'files have'} been sent to the print shop.
+                        </p>
+                        <p className="success-shop">Shop: {connectedShopId}</p>
+                        <button onClick={handleSendMore} className="btn-primary" style={{ marginTop: '24px' }}>
+                            Send More Files to This Shop
+                        </button>
+                    </div>
                 )}
 
                 {status === 'OFFLINE' && (
