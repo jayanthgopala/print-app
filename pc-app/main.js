@@ -174,12 +174,13 @@ ipcMain.handle('save-paper-sizes', async (_event, sizes) => {
     const filtered = Array.isArray(sizes) ? sizes : [];
     if (filtered.length === 0) return { success: false, message: 'Select at least one paper size.' };
     store.set('paperSizes', filtered);
-    // Sync to backend silently — will succeed once service is started
     const token = store.get('shopToken', '');
     if (token) {
-        postToBackend('/shop/update-settings', { paperSizes: filtered }).catch(() => {});
+        const result = await postToBackend('/shop/update-settings', { paperSizes: filtered });
+        logAppEvent('info', 'paper_sizes_sync', { paperSizes: filtered, result });
+        return result;
     }
-    return { success: true };
+    return { success: true, synced: false };
 });
 
 ipcMain.handle('save-settings', async (_event, settings) => {
@@ -314,7 +315,9 @@ ipcMain.handle('start-service', async () => {
     pollTimer = setInterval(() => { void pollJobs(); }, POLL_INTERVAL_MS);
     sendServiceStatus('online');
     const savedSizes = store.get('paperSizes', ['A4']);
-    postToBackend('/shop/update-settings', { paperSizes: savedSizes }).catch(() => {});
+    postToBackend('/shop/update-settings', { paperSizes: savedSizes })
+        .then(r => logAppEvent('info', 'paper_sizes_sync_on_start', { paperSizes: savedSizes, result: r }))
+        .catch(e => logAppEvent('error', 'paper_sizes_sync_on_start_failed', { error: e.message }));
     return { success: true, config: { shopId, token, status: 'online', batchLimit: JOB_BATCH_LIMIT }, message: 'Polling backend for jobs.' };
 });
 

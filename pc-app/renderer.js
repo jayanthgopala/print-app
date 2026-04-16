@@ -553,7 +553,12 @@ async function savePaperSizes() {
         grid.querySelector('input[value="A4"]').checked = true;
         return;
     }
-    await window.electronAPI.savePaperSizes(checked);
+    const result = await window.electronAPI.savePaperSizes(checked);
+    if (result.success) {
+        toast('Paper sizes saved.', 'success');
+    } else {
+        toast('Saved locally. Start service to sync to server.', 'info');
+    }
 }
 
 function playNotifSound() {
