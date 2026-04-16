@@ -24,6 +24,7 @@ export default function App() {
     const [files, setFiles] = useState([]);
     const [progress, setProgress] = useState(0);
     const [currentFile, setCurrentFile] = useState(0);
+    const [totalFiles, setTotalFiles] = useState(0);
     const [pricing, setPricing] = useState(null);
     const [installPrompt, setInstallPrompt] = useState(null);
     const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -244,6 +245,7 @@ export default function App() {
         }
 
         setCurrentFile(0);
+        setTotalFiles(files.length);
         setStatus('CONNECTING');
         setErrorMessage('');
         setInfoMessage('Preparing files for transfer...');
@@ -261,6 +263,8 @@ export default function App() {
                 await new Promise((resolve) => setTimeout(resolve, 400));
             }
             setFiles([]);
+            setCurrentFile(0);
+            setTotalFiles(0);
             setProgress(100);
             setStatus('COMPLETED');
             setInfoMessage('Files sent successfully.');
@@ -584,7 +588,7 @@ export default function App() {
 
                         {files.length > 0 && status !== 'ERROR' && (
                             <button onClick={handleSend} className="btn-primary" disabled={!canSend}>
-                                {isSending ? `Sending ${currentFile || 1}/${files.length}` : `Send ${files.length} File${files.length > 1 ? 's' : ''} to Print`}
+                                {isSending ? `Sending ${currentFile || 1}/${totalFiles}` : `Send ${files.length} File${files.length > 1 ? 's' : ''} to Print`}
                             </button>
                         )}
 
@@ -594,10 +598,10 @@ export default function App() {
                             </button>
                         )}
 
-                        {currentFile > 0 && (
+                        {currentFile > 0 && totalFiles > 0 && (
                             <div className="progress-section">
                                 <div className="progress-text">
-                                    Sending file {currentFile} of {files.length}
+                                    Sending file {currentFile} of {totalFiles}
                                 </div>
                                 <div className="progress-bar">
                                     <div className="progress-fill" style={{ width: `${progress}%` }} />
@@ -644,7 +648,7 @@ function uploadFileToR2(uploadUrl, file, onProgress) {
         xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
 
         xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) {
+            if (event.lengthComputable && event.total > 0) {
                 onProgress((event.loaded / event.total) * 100);
             }
         };
