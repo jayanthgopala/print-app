@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage } = require('electron');
 const { randomInt } = require('crypto');
 const path = require('path');
 const fs = require('fs');
@@ -43,11 +43,12 @@ function loadLocalEnv(envPath) {
     }
 }
 
-function createWindow() {
+async function createWindow() {
+    const icon = await generateAppIcon();
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
-        icon: getAppIconPath(),
+        icon,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -62,6 +63,23 @@ function createWindow() {
         void confirmAndCloseApp();
     });
     mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+async function generateAppIcon() {
+    try {
+        const svgPath = path.join(__dirname, 'assets', 'logo.svg');
+        if (!fs.existsSync(svgPath)) return getAppIconPath();
+        const svgContent = fs.readFileSync(svgPath, 'utf8');
+        const iconWin = new BrowserWindow({ show: false, width: 256, height: 256, webPreferences: { offscreen: true } });
+        const html = `<!DOCTYPE html><html><head><style>*{margin:0;padding:0}body{width:256px;height:256px;overflow:hidden;display:flex;align-items:center;justify-content:center}svg{width:256px;height:256px}</style></head><body>${svgContent}</body></html>`;
+        await iconWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+        const image = await iconWin.webContents.capturePage({ x: 0, y: 0, width: 256, height: 256 });
+        iconWin.close();
+        return image;
+    } catch (error) {
+        logAppEvent('warn', 'icon_generation_failed', { error: error.message });
+        return getAppIconPath();
+    }
 }
 
 function getLogFilePath() {
@@ -142,8 +160,14 @@ ipcMain.handle('get-settings', () => ({
     bwPrice: store.get('bwPrice', ''),
     colorPrinter: store.get('colorPrinter', ''),
     bwPrinter: store.get('bwPrinter', ''),
-    password: store.get('password', '')
+    password: store.get('password', ''),
+    notifSound: store.get('notifSound', true)
 }));
+
+ipcMain.handle('save-notif-sound', (_event, enabled) => {
+    store.set('notifSound', enabled !== false);
+    return { success: true };
+});
 
 ipcMain.handle('save-settings', async (_event, settings) => {
     store.set('shopId', normalizeShopCode(settings.shopId));
@@ -679,14 +703,17 @@ async function loadPrintablePreview(printWindow, filePath, options) {
         orientation: options?.orientation || 'portrait'
     });
     if (isImageFile(normalizedPath)) {
-        const imageUrl = pathToFileURL(normalizedPath).toString();
+        const imageBuffer = fs.readFileSync(normalizedPath);
+        const base64 = imageBuffer.toString('base64');
+        const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+        const dataUrl = `data:${mimeType};base64,${base64}`;
         const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
             html, body { margin: 0; padding: 0; background: white; }
             body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
             .page { width: 100%; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
             img { max-width: 100%; max-height: 100vh; object-fit: ${options?.scale === 'actual' ? 'none' : 'contain'}; }
             @page { size: ${escapeHtml(options?.paperSize || 'A4')} ${options?.orientation === 'landscape' ? 'landscape' : 'portrait'}; margin: 0; }
-        </style></head><body><div class="page"><img src="${imageUrl}" alt="Printable image"></div></body></html>`;
+        </style></head><body><div class="page"><img src="${dataUrl}" alt="Printable image"></div></body></html>`;
         await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
         await printWindow.webContents.executeJavaScript(`
             new Promise((resolve, reject) => {

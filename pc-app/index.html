@@ -5,831 +5,336 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Print Shop Manager</title>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        :root {
-            --bg: #f2f6fb;
-            --bg-deep: #dfe9f6;
-            --panel: rgba(255, 255, 255, 0.9);
-            --panel-strong: #ffffff;
-            --panel-border: rgba(142, 164, 190, 0.28);
-            --text: #172233;
-            --muted: #607086;
-            --brand: #1f6feb;
-            --brand-deep: #194fb3;
-            --accent: #0f9d8a;
-            --accent-soft: #dcf6ef;
-            --warn: #f59e0b;
-            --danger: #c0394b;
-            --danger-soft: #fde7ea;
-            --success: #1d7a45;
-            --success-soft: #ddf5e4;
-            --line: #dbe5f0;
-            --shadow-lg: 0 24px 60px rgba(15, 23, 42, 0.12);
-            --shadow-md: 0 14px 30px rgba(15, 23, 42, 0.08);
-            --radius-xl: 28px;
-            --radius-lg: 22px;
-            --radius-md: 16px;
-            --radius-sm: 12px;
-        }
-
-        body {
-            min-height: 100vh;
-            font-family: "Segoe UI", "Helvetica Neue", sans-serif;
-            color: var(--text);
-            background:
-                radial-gradient(circle at top left, rgba(31, 111, 235, 0.14), transparent 28%),
-                radial-gradient(circle at bottom right, rgba(15, 157, 138, 0.16), transparent 30%),
-                linear-gradient(180deg, #f8fbff 0%, var(--bg) 48%, var(--bg-deep) 100%);
-        }
-
-        body::before {
-            content: "";
-            position: fixed;
-            inset: 0;
-            background-image:
-                linear-gradient(rgba(255, 255, 255, 0.28) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255, 255, 255, 0.28) 1px, transparent 1px);
-            background-size: 36px 36px;
-            mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.55), transparent 90%);
-            pointer-events: none;
-        }
-
-        .app-shell {
-            position: relative;
-            z-index: 1;
-            max-width: 1440px;
-            margin: 0 auto;
-            padding: 28px;
-        }
-
-        .hero {
-            position: relative;
-            overflow: hidden;
-            display: grid;
-            grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
-            gap: 22px;
-            padding: 28px;
-            border-radius: var(--radius-xl);
-            background:
-                linear-gradient(135deg, rgba(17, 33, 61, 0.96), rgba(23, 86, 182, 0.94) 48%, rgba(13, 139, 123, 0.92));
-            color: #fff;
-            box-shadow: var(--shadow-lg);
-            margin-bottom: 24px;
-        }
-
-        .hero::after {
-            content: "";
-            position: absolute;
-            width: 280px;
-            height: 280px;
-            right: -40px;
-            top: -80px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.08);
-            filter: blur(8px);
-        }
-
-        .hero-main,
-        .hero-side {
-            position: relative;
-            z-index: 1;
-        }
-
-        .hero-main {
-            display: flex;
-            flex-direction: column;
-            gap: 22px;
-        }
-
-        .brand-row {
-            display: flex;
-            align-items: center;
-            gap: 18px;
-        }
-
-        .brand-logo {
-            width: 78px;
-            height: 78px;
-            border-radius: 22px;
-            background: rgba(255, 255, 255, 0.14);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
-            display: grid;
-            place-items: center;
-            backdrop-filter: blur(10px);
-        }
-
-        .brand-logo img {
-            width: 54px;
-            height: 54px;
-        }
-
-        .brand-copy p {
-            font-size: 12px;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-            opacity: 0.78;
-            margin-bottom: 6px;
-        }
-
-        .brand-copy h1 {
-            font-size: 36px;
-            line-height: 1.02;
-            letter-spacing: -0.03em;
-        }
-
-        .hero-copy {
-            max-width: 760px;
-            font-size: 16px;
-            line-height: 1.7;
-            color: rgba(255, 255, 255, 0.86);
-        }
-
-        .hero-metrics {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 14px;
-        }
-
-        .metric-card {
-            padding: 16px;
-            border-radius: 18px;
-            background: rgba(255, 255, 255, 0.12);
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            backdrop-filter: blur(10px);
-        }
-
-        .metric-card span {
-            display: block;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            opacity: 0.72;
-            margin-bottom: 8px;
-        }
-
-        .metric-card strong {
-            display: block;
-            font-size: 21px;
-            letter-spacing: -0.03em;
-        }
-
-        .hero-side {
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            gap: 18px;
-        }
-
-        .status-panel,
-        .support-panel {
-            padding: 18px;
-            border-radius: 22px;
-            background: rgba(255, 255, 255, 0.12);
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            backdrop-filter: blur(8px);
-        }
-
-        .status-panel small,
-        .support-panel small {
-            display: block;
-            font-size: 12px;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            opacity: 0.72;
-            margin-bottom: 10px;
-        }
-
-        .status-line {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 14px;
-        }
-
-        .status {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 16px;
-            border-radius: 999px;
-            font-weight: 700;
-            font-size: 13px;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-        }
-
-        .status::before {
-            content: "";
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: currentColor;
-        }
-
-        .status.online {
-            background: rgba(214, 252, 229, 0.94);
-            color: var(--success);
-        }
-
-        .status.offline {
-            background: rgba(255, 233, 236, 0.96);
-            color: var(--danger);
-        }
-
-        .status-note,
-        .support-panel p {
-            color: rgba(255, 255, 255, 0.82);
-            line-height: 1.6;
-            font-size: 14px;
-        }
-
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
-            gap: 22px;
-            align-items: start;
-        }
-
-        .panel {
-            background: var(--panel);
-            border: 1px solid var(--panel-border);
-            border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-md);
-            backdrop-filter: blur(12px);
-        }
-
-        .panel-header {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 18px;
-            padding: 24px 24px 0;
-            margin-bottom: 18px;
-        }
-
-        .panel-header h2,
-        .panel-header h3 {
-            font-size: 24px;
-            letter-spacing: -0.03em;
-            margin-bottom: 6px;
-        }
-
-        .panel-header p {
-            color: var(--muted);
-            line-height: 1.6;
-            font-size: 14px;
-        }
-
-        .settings-panel,
-        .orders-panel,
-        .qr-panel {
-            padding-bottom: 24px;
-        }
-
-        .content-pad {
-            padding: 0 24px;
-        }
-
-        .message-banner {
-            display: none;
-            margin: 0 24px 20px;
-            padding: 14px 16px;
-            border-radius: 14px;
-            font-weight: 600;
-            border: 1px solid transparent;
-        }
-
-        .section-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 16px;
-        }
-
-        .field-card {
-            padding: 16px;
-            border-radius: 18px;
-            background: rgba(248, 251, 255, 0.94);
-            border: 1px solid var(--line);
-        }
-
-        .field-card.full {
-            grid-column: 1 / -1;
-        }
-
-        .field-card.accent {
-            background: linear-gradient(180deg, #fdfefe 0%, #f1fbf8 100%);
-            border-color: #cdebe3;
-        }
-
-        .field-card label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 12px;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: var(--muted);
-        }
-
-        .field-card input,
-        .field-card select {
-            width: 100%;
-            border: 1px solid var(--line);
-            border-radius: 14px;
-            padding: 13px 14px;
-            background: #fff;
-            color: var(--text);
-            font-size: 14px;
-            transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
-        }
-
-        .field-card input:focus,
-        .field-card select:focus {
-            outline: none;
-            border-color: rgba(31, 111, 235, 0.5);
-            box-shadow: 0 0 0 4px rgba(31, 111, 235, 0.12);
-            transform: translateY(-1px);
-        }
-
-        .inline-row {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 14px;
-        }
-
-        .hint {
-            margin-top: 9px;
-            color: var(--muted);
-            font-size: 12px;
-            line-height: 1.5;
-        }
-
-        .cta-row {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-            margin-top: 18px;
-        }
-
-        .cta-row .wide {
-            grid-column: 1 / -1;
-        }
-
-        button {
-            appearance: none;
-            border: none;
-            border-radius: 14px;
-            padding: 14px 18px;
-            font-weight: 700;
-            font-size: 14px;
-            color: white;
-            background: linear-gradient(135deg, var(--brand), var(--brand-deep));
-            cursor: pointer;
-            box-shadow: 0 12px 24px rgba(31, 111, 235, 0.18);
-            transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
-        }
-
-        button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 16px 26px rgba(31, 111, 235, 0.22);
-        }
-
-        button:active {
-            transform: translateY(0);
-        }
-
-        .btn-secondary {
-            background: linear-gradient(135deg, #2a3d57, #1d293b);
-            box-shadow: 0 12px 24px rgba(23, 34, 51, 0.16);
-        }
-
-        .btn-accent {
-            background: linear-gradient(135deg, var(--accent), #0b7f71);
-            box-shadow: 0 12px 24px rgba(15, 157, 138, 0.18);
-        }
-
-        .btn-warn {
-            background: linear-gradient(135deg, #f59e0b, #d97706);
-            box-shadow: 0 12px 24px rgba(217, 119, 6, 0.18);
-        }
-
-        .btn-skip {
-            padding: 9px 14px;
-            border-radius: 12px;
-            background: linear-gradient(135deg, #ffd15c, #f4a40f);
-            color: #3d2800;
-            box-shadow: none;
-        }
-
-        .mini-stat {
-            min-width: 118px;
-            padding: 13px 14px;
-            border-radius: 16px;
-            background: linear-gradient(180deg, #ffffff, #f6f9fd);
-            border: 1px solid var(--line);
-            text-align: right;
-        }
-
-        .mini-stat small {
-            display: block;
-            color: var(--muted);
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 6px;
-        }
-
-        .mini-stat strong {
-            font-size: 24px;
-            letter-spacing: -0.03em;
-        }
-
-        .orders-empty {
-            padding: 44px 24px;
-            border: 1px dashed #c7d5e5;
-            border-radius: 18px;
-            text-align: center;
-            color: var(--muted);
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 248, 252, 0.92));
-        }
-
-        .customer-group {
-            margin: 0 24px 18px;
-            padding: 18px;
-            border-radius: 20px;
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 255, 0.96));
-            border: 1px solid var(--line);
-            box-shadow: 0 14px 26px rgba(15, 23, 42, 0.05);
-        }
-
-        .customer-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 16px;
-            padding: 16px 18px;
-            margin-bottom: 14px;
-            border-radius: 16px;
-            background: linear-gradient(135deg, #233554, #1f6feb);
-            color: white;
-        }
-
-        .order-item {
-            margin-bottom: 12px;
-            padding: 18px;
-            border-radius: 18px;
-            background: white;
-            border: 1px solid #dde7f2;
-        }
-
-        .order-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 18px;
-        }
-
-        .order-details {
-            flex: 1;
-            min-width: 0;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
-        }
-
-        .print-btn {
-            min-width: 140px;
-            max-width: 140px;
-            flex-shrink: 0;
-            background: linear-gradient(135deg, #18a058, #0c7a3f);
-            box-shadow: 0 12px 24px rgba(24, 160, 88, 0.16);
-        }
-
-        .print-btn:disabled {
-            opacity: 0.55;
-            cursor: not-allowed;
-            box-shadow: none;
-        }
-
-        .qr-wrap {
-            margin: 0 24px;
-            padding: 26px;
-            border-radius: 20px;
-            border: 1px dashed #cbd9e7;
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 252, 0.96));
-            text-align: center;
-        }
-
-        #qrCode {
-            min-height: 160px;
-            margin: 18px auto 14px;
-            display: grid;
-            place-items: center;
-        }
-
-        #qrCode img {
-            border-radius: 18px;
-            padding: 12px;
-            background: white;
-            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
-        }
-
-        .modal {
-            position: fixed;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-            background: rgba(13, 18, 28, 0.62);
-            backdrop-filter: blur(7px);
-            z-index: 1000;
-        }
-
-        .modal-content {
-            width: min(620px, 100%);
-            max-height: calc(100vh - 48px);
-            overflow-y: auto;
-            padding: 24px;
-            border-radius: 24px;
-            background: linear-gradient(180deg, #ffffff, #f6f9fd);
-            border: 1px solid rgba(148, 163, 184, 0.24);
-            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.26);
-        }
-
-        .modal-content h2 {
-            font-size: 28px;
-            letter-spacing: -0.03em;
-            margin-bottom: 14px;
-        }
-
-        #printDetails {
-            margin-top: 14px;
-            padding: 16px;
-            border-radius: 18px;
-            background: white;
-            border: 1px solid var(--line);
-        }
-
-        #printDetails div {
-            padding: 10px 0;
-            border-bottom: 1px solid #e5edf6;
-        }
-
-        #printDetails div:last-child {
-            border-bottom: none;
-        }
-
-        .modal-buttons {
-            display: flex;
-            gap: 12px;
-            margin-top: 18px;
-            position: sticky;
-            bottom: 0;
-            padding-top: 14px;
-            background: linear-gradient(180deg, rgba(246, 249, 253, 0), rgba(246, 249, 253, 1) 35%);
-        }
-
-        .btn-print {
-            flex: 1;
-            background: linear-gradient(135deg, #0f9d8a, #1570ef);
-        }
-
-        .btn-cancel {
-            flex: 1;
-            background: linear-gradient(135deg, #d8e0eb, #c3cedd);
-            color: #203044;
-            box-shadow: none;
-        }
-
-        @media (max-width: 1180px) {
-            .dashboard-grid,
-            .hero {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        @media (max-width: 760px) {
-            .app-shell {
-                padding: 16px;
-            }
-
-            .hero,
-            .panel-header,
-            .content-pad,
-            .message-banner,
-            .customer-group,
-            .qr-wrap {
-                margin-left: 0;
-                margin-right: 0;
-            }
-
-            .hero {
-                padding: 20px;
-            }
-
-            .brand-row {
-                align-items: flex-start;
-            }
-
-            .brand-copy h1 {
-                font-size: 28px;
-            }
-
-            .hero-metrics,
-            .section-grid,
-            .inline-row,
-            .cta-row,
-            .modal-buttons {
-                grid-template-columns: 1fr;
-                display: grid;
-            }
-
-            .order-header,
-            .customer-header,
-            .panel-header {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            button:not(.print-btn),
-            .mini-stat {
-                width: 100%;
-            }
+        *{box-sizing:border-box;margin:0;padding:0}
+        :root{
+            --bg:#0f1117;--bg2:#181b23;--bg3:#1e222c;--bg4:#262b38;
+            --surface:#1c2030;--surface2:#232838;--surface3:#2a3044;
+            --border:#2e3548;--border2:#3a4158;
+            --text:#e8ecf4;--text2:#a4aec4;--text3:#6b7894;
+            --brand:#4f8ff7;--brand2:#3b7ae8;--brand-soft:rgba(79,143,247,0.12);
+            --green:#34d399;--green2:#22c55e;--green-soft:rgba(52,211,153,0.12);
+            --amber:#fbbf24;--amber-soft:rgba(251,191,36,0.12);
+            --red:#f87171;--red-soft:rgba(248,113,113,0.12);
+            --purple:#a78bfa;--purple-soft:rgba(167,139,250,0.12);
+            --r:14px;--r2:18px;--r3:24px;
+            --shadow:0 8px 32px rgba(0,0,0,0.28);
+        }
+        html,body{height:100%;overflow:hidden}
+        body{font-family:'Segoe UI','Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column}
+
+        /* ── Topbar ── */
+        .topbar{display:flex;align-items:center;gap:16px;padding:12px 24px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;-webkit-app-region:drag}
+        .topbar-brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:16px;letter-spacing:-0.02em}
+        .topbar-brand img{width:32px;height:32px;border-radius:8px}
+        .topbar-stats{display:flex;gap:6px;margin-left:auto;-webkit-app-region:no-drag}
+        .stat-chip{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:0.02em}
+        .stat-chip.pending{background:var(--brand-soft);color:var(--brand)}
+        .stat-chip.printed{background:var(--green-soft);color:var(--green)}
+        .stat-chip.failed{background:var(--red-soft);color:var(--red)}
+        .topbar-status{display:flex;align-items:center;gap:8px;padding:6px 16px;border-radius:20px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;-webkit-app-region:no-drag}
+        .topbar-status.online{background:var(--green-soft);color:var(--green)}
+        .topbar-status.offline{background:var(--red-soft);color:var(--red)}
+        .topbar-status::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor}
+        .topbar-status.online::before{box-shadow:0 0 8px var(--green)}
+
+        /* ── Tabs ── */
+        .tab-bar{display:flex;gap:2px;padding:0 24px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
+        .tab-btn{padding:12px 22px;font-size:13px;font-weight:700;color:var(--text3);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;transition:all .15s;letter-spacing:0.02em}
+        .tab-btn:hover{color:var(--text2)}
+        .tab-btn.active{color:var(--brand);border-bottom-color:var(--brand)}
+        .tab-btn .badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;margin-left:8px;border-radius:10px;background:var(--brand);color:#fff;font-size:11px;font-weight:800}
+
+        /* ── Main content ── */
+        .main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+        .tab-page{display:none;flex:1;overflow-y:auto;padding:24px}
+        .tab-page.active{display:flex;flex-direction:column;gap:20px}
+
+        /* ── Cards / Panels ── */
+        .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:20px}
+        .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+        .card-title{font-size:16px;font-weight:800;letter-spacing:-0.02em}
+        .card-sub{font-size:13px;color:var(--text3);margin-top:2px}
+
+        /* ── Queue ── */
+        .queue-empty{padding:60px 24px;text-align:center;border:1px dashed var(--border2);border-radius:var(--r2);color:var(--text3)}
+        .queue-empty-icon{font-size:40px;margin-bottom:12px;opacity:.5}
+        .queue-empty-text{font-size:15px;font-weight:600}
+        .queue-empty-sub{font-size:13px;margin-top:6px}
+
+        .cgroup{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;margin-bottom:16px}
+        .cgroup-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;background:var(--surface2);cursor:pointer;user-select:none;transition:background .15s}
+        .cgroup-header:hover{background:var(--surface3)}
+        .cgroup-meta{display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;min-width:0}
+        .cgroup-name{font-weight:800;font-size:14px}
+        .cgroup-badge{padding:3px 10px;border-radius:8px;font-size:11px;font-weight:700;background:var(--brand-soft);color:var(--brand)}
+        .cgroup-time{font-size:12px;color:var(--text3)}
+        .cgroup-body{padding:12px}
+        .cgroup-body.collapsed{display:none}
+
+        .job-card{display:flex;align-items:flex-start;gap:16px;padding:14px 16px;border-radius:var(--r);background:var(--bg3);border:1px solid var(--border);margin-bottom:8px;transition:border-color .15s}
+        .job-card:last-child{margin-bottom:0}
+        .job-card:hover{border-color:var(--border2)}
+        .job-icon{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:18px;flex-shrink:0;font-weight:800}
+        .job-icon.pdf{background:var(--red-soft);color:var(--red)}
+        .job-icon.img{background:var(--purple-soft);color:var(--purple)}
+        .job-icon.doc{background:var(--brand-soft);color:var(--brand)}
+        .job-body{flex:1;min-width:0}
+        .job-filename{font-weight:700;font-size:14px;margin-bottom:4px;word-break:break-all}
+        .job-meta{font-size:12px;color:var(--text3);line-height:1.6}
+        .job-tags{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+        .jtag{padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em}
+        .jtag-color{background:rgba(79,143,247,0.15);color:#6fa8ff}
+        .jtag-bw{background:rgba(148,163,184,0.15);color:#94a3b8}
+        .jtag-paper{background:rgba(251,191,36,0.12);color:var(--amber)}
+        .jtag-copies{background:var(--green-soft);color:var(--green)}
+        .job-actions{flex-shrink:0;display:flex;flex-direction:column;gap:6px}
+
+        /* ── History ── */
+        .history-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:var(--r);background:var(--bg3);border:1px solid var(--border);margin-bottom:6px;font-size:13px}
+        .history-item .hi-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+        .history-item .hi-status.ok{background:var(--green)}
+        .history-item .hi-status.fail{background:var(--red)}
+        .history-item .hi-name{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .history-item .hi-time{color:var(--text3);font-size:12px;flex-shrink:0}
+
+        /* ── Settings ── */
+        .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+        .settings-grid .full{grid-column:1/-1}
+        .field{display:flex;flex-direction:column;gap:6px}
+        .field-label{font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3)}
+        .field-input{width:100%;padding:11px 14px;border-radius:var(--r);border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;transition:border-color .15s,box-shadow .15s}
+        .field-input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+        .field-hint{font-size:11px;color:var(--text3);line-height:1.4}
+
+        /* ── QR ── */
+        .qr-display{display:flex;flex-direction:column;align-items:center;padding:40px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2)}
+        .qr-display img{border-radius:var(--r);padding:16px;background:#fff;box-shadow:var(--shadow)}
+        .qr-display .qr-label{margin-top:16px;font-size:14px;color:var(--text2)}
+
+        /* ── Buttons ── */
+        .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 20px;border-radius:var(--r);font-weight:700;font-size:13px;border:none;cursor:pointer;transition:all .15s;color:#fff;letter-spacing:0.01em}
+        .btn:hover{transform:translateY(-1px);filter:brightness(1.08)}
+        .btn:active{transform:translateY(0)}
+        .btn:disabled{opacity:.45;cursor:not-allowed;transform:none;filter:none}
+        .btn-primary{background:var(--brand)}
+        .btn-success{background:var(--green2)}
+        .btn-danger{background:#dc2626}
+        .btn-ghost{background:var(--surface3);color:var(--text2)}
+        .btn-ghost:hover{background:var(--bg4)}
+        .btn-amber{background:#d97706;color:#fff}
+        .btn-sm{padding:8px 14px;font-size:12px;border-radius:10px}
+        .btn-lg{padding:14px 28px;font-size:15px}
+        .btn-block{width:100%}
+        .btn-row{display:flex;gap:10px;flex-wrap:wrap}
+
+        /* ── Print button (green, prominent) ── */
+        .btn-print-job{padding:10px 20px;border-radius:12px;background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;font-weight:800;font-size:13px;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(34,197,94,0.25);transition:all .15s}
+        .btn-print-job:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(34,197,94,0.35)}
+        .btn-print-job:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+        .btn-skip-cust{padding:7px 14px;border-radius:10px;background:var(--amber-soft);color:var(--amber);font-weight:700;font-size:12px;border:none;cursor:pointer;transition:all .15s}
+        .btn-skip-cust:hover{background:rgba(251,191,36,0.22)}
+
+        /* ── Modal ── */
+        .modal-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,0.6);backdrop-filter:blur(6px);z-index:1000}
+        .modal-box{width:min(580px,100%);max-height:calc(100vh - 40px);overflow-y:auto;padding:28px;border-radius:var(--r3);background:var(--bg2);border:1px solid var(--border);box-shadow:0 32px 80px rgba(0,0,0,0.45)}
+        .modal-box h2{font-size:22px;font-weight:800;letter-spacing:-0.02em;margin-bottom:20px}
+        .modal-sep{height:1px;background:var(--border);margin:14px 0}
+        .modal-field{margin-bottom:14px}
+        .modal-field-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text3);margin-bottom:6px}
+        .modal-field-value{font-size:14px;font-weight:600;padding:8px 0}
+        .modal-field-input{width:100%;padding:10px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px}
+        .modal-field-input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+        .modal-field-hint{font-size:11px;color:var(--text3);margin-top:4px}
+        .modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+        .modal-footer{display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+
+        /* ── Toast ── */
+        .toast-container{position:fixed;top:60px;right:24px;z-index:2000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+        .toast{display:flex;align-items:center;gap:10px;padding:12px 18px;border-radius:var(--r);font-size:13px;font-weight:600;pointer-events:auto;animation:toastIn .3s ease;box-shadow:var(--shadow);max-width:400px}
+        .toast.success{background:#15803d;color:#fff}
+        .toast.error{background:#b91c1c;color:#fff}
+        .toast.info{background:#1d4ed8;color:#fff}
+        .toast.out{animation:toastOut .25s ease forwards}
+        @keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
+        @keyframes toastOut{to{opacity:0;transform:translateX(40px)}}
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar{width:6px}
+        ::-webkit-scrollbar-track{background:transparent}
+        ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+        ::-webkit-scrollbar-thumb:hover{background:var(--border2)}
+
+        /* ── Toggle switch ── */
+        .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;cursor:pointer;user-select:none}
+        .toggle-label{font-size:14px;font-weight:600;color:var(--text)}
+        .toggle-check{display:none}
+        .toggle-switch{position:relative;width:44px;height:24px;border-radius:12px;background:var(--border2);transition:background .2s;flex-shrink:0}
+        .toggle-switch::after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s}
+        .toggle-check:checked+.toggle-switch{background:var(--green)}
+        .toggle-check:checked+.toggle-switch::after{transform:translateX(20px)}
+
+        /* ── Responsive ── */
+        @media(max-width:900px){
+            .settings-grid,.modal-grid{grid-template-columns:1fr}
+            .topbar-stats{display:none}
         }
     </style>
 </head>
 <body>
-    <div class="app-shell">
-        <section class="hero">
-            <div class="hero-main">
-                <div class="brand-row">
-                    <div class="brand-logo">
-                        <img src="assets/logo.svg" alt="Print Shop Manager logo">
-                    </div>
-                    <div class="brand-copy">
-                        <p>PC Print Console</p>
-                        <h1>Print Shop Manager</h1>
-                    </div>
-                </div>
-                <div class="hero-copy">
-                    Receive customer files, route jobs to the correct printer, and keep your desktop print counter organized from one screen.
-                </div>
-                <div class="hero-metrics">
-                    <div class="metric-card">
-                        <span>Output</span>
-                        <strong>Color + B/W</strong>
-                    </div>
-                </div>
-            </div>
-            <div class="hero-side">
-                <div class="status-panel">
-                    <small>Service Status</small>
-                    <div class="status-line">
-                        <span id="statusBadge" class="status offline">Offline</span>
-                    </div>
-                    <div class="status-note">Start the service after entering your shop code, password, pricing, and printer assignments.</div>
-                </div>
-                <div class="support-panel">
-                    <small>Workflow</small>
-                    <p>1. Save settings and connect.<br>2. Show QR for customers.<br>3. Print incoming jobs from the queue.</p>
-                </div>
-            </div>
-        </section>
 
-        <section class="dashboard-grid">
-            <div class="panel settings-panel">
-                <div class="panel-header">
-                    <div>
-                        <h2>Control Desk</h2>
-                        <p>Configure the shop identity, prices, download folder, and printer routing for this PC.</p>
-                    </div>
-                </div>
+<div class="topbar">
+    <div class="topbar-brand">
+        <img src="assets/logo.svg" alt="">
+        Print Shop Manager
+    </div>
+    <div class="topbar-stats">
+        <div class="stat-chip pending" id="statPending">Pending: 0</div>
+        <div class="stat-chip printed" id="statPrinted">Printed: 0</div>
+    </div>
+    <div class="topbar-status offline" id="statusBadge">Offline</div>
+</div>
 
-                <div id="uiMessage" class="message-banner"></div>
+<div class="tab-bar">
+    <button class="tab-btn active" data-tab="queue">Queue <span class="badge" id="queueBadge" style="display:none">0</span></button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+    <button class="tab-btn" data-tab="qr">QR Code</button>
+    <button class="tab-btn" data-tab="history">History</button>
+</div>
 
-                <div class="content-pad">
-                    <div class="section-grid">
-                        <div class="field-card">
-                            <label for="shopId">Shop Code</label>
-                            <input type="text" id="shopId" placeholder="SHOP001">
-                            <div class="hint">Use the exact shop code issued in your admin panel.</div>
-                        </div>
-
-                        <div class="field-card">
-                            <label for="shopPassword">Shop Password</label>
-                            <input type="password" id="shopPassword" placeholder="Enter shop password">
-                            <div class="hint">Required before the PC app can go online.</div>
-                        </div>
-
-                    </div>
-
-                    <div class="cta-row" style="margin-top: 20px;">
-                        <button type="button" class="wide" onclick="saveAndStart()">Save and Start Service</button>
-                    </div>
-
-                    <div class="cta-row" style="margin-top: 12px;">
-                        <button type="button" class="btn-warn wide" onclick="installCloudflared()">Architecture Info</button>
-                    </div>
-
-                    <div class="section-grid" style="margin-top: 20px;">
-                        <div class="field-card full">
-                            <label for="downloadPath">Download Folder</label>
-                            <input type="text" id="downloadPath" readonly>
-                            <div class="cta-row" style="margin-top: 12px;">
-                                <button type="button" class="btn-secondary wide" onclick="selectFolder()">Browse Folder</button>
-                            </div>
-                        </div>
-
-                        <div class="field-card accent full">
-                            <label>Pricing</label>
-                            <div class="inline-row">
-                                <div>
-                                    <label for="colorPrice">Color Price Per Page</label>
-                                    <input type="number" id="colorPrice" step="0.01" value="5.00">
-                                </div>
-                                <div>
-                                    <label for="bwPrice">B&W Price Per Page</label>
-                                    <input type="number" id="bwPrice" step="0.01" value="2.00">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="field-card">
-                            <label for="colorPrinter">Color Printer</label>
-                            <select id="colorPrinter">
-                                <option value="">Select Color Printer</option>
-                            </select>
-                        </div>
-
-                        <div class="field-card">
-                            <label for="bwPrinter">B&W Printer</label>
-                            <select id="bwPrinter">
-                                <option value="">Select B&amp;W Printer</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="cta-row">
-                        <button type="button" class="btn-secondary" onclick="loadPrinters()">Refresh Printers</button>
-                        <button type="button" class="btn-accent" onclick="showQR()">Show QR Code</button>
-                    </div>
-                </div>
-            </div>
-
-            <div>
-                <div class="panel qr-panel" id="qrSection" style="display: none; margin-bottom: 22px;">
-                    <div class="panel-header">
-                        <div>
-                            <h3>Customer QR</h3>
-                            <p>Customers can scan this code to send files directly to this print desk.</p>
-                        </div>
-                        <button type="button" onclick="closeQR()" style="background: var(--danger); color: white; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-weight: 600; font-size: 14px;">Close</button>
-                    </div>
-                    <div class="qr-wrap">
-                        <div id="qrCode"></div>
-                        <p style="color: var(--muted); margin-bottom: 14px;">Keep this visible near the counter for quick walk-in transfers.</p>
-                        <button type="button" class="btn-accent" onclick="printQR()">Print QR Sheet</button>
-                    </div>
-                </div>
-
-                <div class="panel orders-panel">
-                    <div class="panel-header">
-                        <div>
-                            <h3>Incoming Queue</h3>
-                            <p>Jobs are grouped by customer. Print the first customer group before moving to the next.</p>
-                        </div>
-                        <div class="mini-stat">
-                            <small>Orders</small>
-                            <strong id="orderCount">0</strong>
-                        </div>
-                    </div>
-                    <div id="orderList" class="content-pad">
-                        <div class="orders-empty">No orders yet</div>
-                    </div>
-                </div>
-            </div>
-        </section>
+<div class="main">
+    <!-- ═══ QUEUE TAB ═══ -->
+    <div class="tab-page active" id="tab-queue">
+        <div id="orderList"></div>
     </div>
 
-    <div id="printModal" class="modal" style="display:none;">
-        <div class="modal-content">
-            <h2>Print Job</h2>
-            <div id="printDetails"></div>
-            <div class="modal-buttons">
-                <button type="button" onclick="openNativePrintDialog()" class="btn-secondary">Open Printer Settings</button>
-                <button type="button" onclick="confirmPrint()" class="btn-print">Print Now</button>
-                <button type="button" onclick="closePrintModal()" class="btn-cancel">Cancel</button>
+    <!-- ═══ SETTINGS TAB ═══ -->
+    <div class="tab-page" id="tab-settings">
+        <div class="card">
+            <div class="card-header">
+                <div><div class="card-title">Shop Connection</div><div class="card-sub">Enter your shop code and password to go online.</div></div>
+            </div>
+            <div id="uiMessage" style="display:none;padding:12px 16px;border-radius:10px;font-size:13px;font-weight:600;margin-bottom:16px"></div>
+            <div class="settings-grid">
+                <div class="field">
+                    <div class="field-label">Shop Code</div>
+                    <input type="text" class="field-input" id="shopId" placeholder="SHOP001">
+                </div>
+                <div class="field">
+                    <div class="field-label">Password</div>
+                    <input type="password" class="field-input" id="shopPassword" placeholder="Enter shop password">
+                </div>
+                <div class="full">
+                    <button type="button" class="btn btn-primary btn-lg btn-block" id="btnSaveStart" onclick="saveAndStart()">Save and Start Service</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div><div class="card-title">Download Folder</div><div class="card-sub">Where received files are saved on this PC.</div></div>
+            </div>
+            <div class="settings-grid">
+                <div class="field full" style="flex-direction:row;align-items:center;gap:12px">
+                    <input type="text" class="field-input" id="downloadPath" readonly style="flex:1">
+                    <button type="button" class="btn btn-ghost" onclick="selectFolder()">Browse</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div><div class="card-title">Pricing</div></div>
+            </div>
+            <div class="settings-grid">
+                <div class="field">
+                    <div class="field-label">Color Price / Page (Rs)</div>
+                    <input type="number" class="field-input" id="colorPrice" step="0.01" value="5.00">
+                </div>
+                <div class="field">
+                    <div class="field-label">B&W Price / Page (Rs)</div>
+                    <input type="number" class="field-input" id="bwPrice" step="0.01" value="2.00">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div><div class="card-title">Printers</div><div class="card-sub">Assign a color printer and a B&W printer for routing jobs.</div></div>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="loadPrinters()">Refresh</button>
+            </div>
+            <div class="settings-grid">
+                <div class="field">
+                    <div class="field-label">Color Printer</div>
+                    <select class="field-input" id="colorPrinter"><option value="">Select printer</option></select>
+                </div>
+                <div class="field">
+                    <div class="field-label">B&W Printer</div>
+                    <select class="field-input" id="bwPrinter"><option value="">Select printer</option></select>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div><div class="card-title">Notifications</div><div class="card-sub">Control alerts when new jobs arrive.</div></div>
+            </div>
+            <label class="toggle-row">
+                <span class="toggle-label">Play sound on new order</span>
+                <input type="checkbox" id="toggleSound" class="toggle-check" checked onchange="toggleNotifSound(this)">
+                <span class="toggle-switch"></span>
+            </label>
+        </div>
+    </div>
+
+    <!-- ═══ QR TAB ═══ -->
+    <div class="tab-page" id="tab-qr">
+        <div class="card" style="text-align:center">
+            <div class="card-title" style="margin-bottom:8px">Customer QR Code</div>
+            <div class="card-sub" style="margin-bottom:20px">Customers scan this to send files directly to your print desk.</div>
+            <div id="qrDisplay" class="qr-display" style="display:none">
+                <div id="qrCode"></div>
+                <div class="qr-label" id="qrShopLabel"></div>
+            </div>
+            <div id="qrPlaceholder" style="padding:40px;color:var(--text3)">Click below to generate the QR code.</div>
+            <div class="btn-row" style="justify-content:center;margin-top:20px">
+                <button type="button" class="btn btn-primary" onclick="showQR()">Generate QR</button>
+                <button type="button" class="btn btn-ghost" onclick="printQR()" id="btnPrintQR" disabled>Print QR Sheet</button>
             </div>
         </div>
     </div>
 
-    <script src="renderer.js"></script>
+    <!-- ═══ HISTORY TAB ═══ -->
+    <div class="tab-page" id="tab-history">
+        <div class="card">
+            <div class="card-header">
+                <div><div class="card-title">Print History</div><div class="card-sub">Jobs completed in this session.</div></div>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="clearHistory()">Clear</button>
+            </div>
+            <div id="historyList" style="color:var(--text3);font-size:13px;padding:20px 0;text-align:center">No history yet.</div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Toast container ── -->
+<div class="toast-container" id="toasts"></div>
+
+<!-- ── Print modal ── -->
+<div id="printModal" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+        <h2>Print Job</h2>
+        <div id="printDetails"></div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-success btn-lg" id="btnConfirmPrint" onclick="confirmPrint()" style="flex:2">Print Now</button>
+            <button type="button" class="btn btn-ghost btn-lg" onclick="closePrintModal()" style="flex:1">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── New-job audio ── -->
+<audio id="notifSound" preload="auto">
+    <source src="data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGFOAQAAAAEAAABkYXRhDgAAAGBhYWJjZGRlZWZm" type="audio/wav">
+</audio>
+
+<script src="renderer.js"></script>
 </body>
 </html>
