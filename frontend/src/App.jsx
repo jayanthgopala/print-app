@@ -129,7 +129,7 @@ export default function App() {
     const handleSendMore = () => { setFiles([]); setCurrentFile(0); setTotalFiles(0); setSentFileCount(0); setProgress(0); setCustomerName(''); setErrorMessage(''); setInfoMessage('Shop is online. Upload your files.'); setStatus('ONLINE'); };
 
     const showConnectedPanel = ['ONLINE', 'CONNECTING', 'TRANSFERRING', 'ERROR'].includes(status);
-    const canSend = !isSending && status !== 'OFFLINE' && customerName.trim() && files.length > 0;
+    const canSend = !isSending && status !== 'OFFLINE' && customerName.trim().split(/\s+/).length >= 2 && files.length > 0;
 
     const getFileIcon = (type) => {
         if (type === 'application/pdf') return { cls: 'pdf', letter: 'P' };
@@ -202,7 +202,10 @@ export default function App() {
                     )}
 
                     <div className="card">
-                        <input type="text" placeholder="Your Name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="input" maxLength={50} />
+                        <input type="text" placeholder="Full Name (e.g. Rahul Sharma)" value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="input" maxLength={50} />
+                        {customerName.trim() && customerName.trim().split(/\s+/).length < 2 && (
+                            <div className="name-warn">Use your full name. Orders with the same name are grouped together</div>
+                        )}
                     </div>
 
                     <label className={`file-picker ${isDragActive ? 'active' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragActive(true); }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setIsDragActive(false); }} onDrop={handleDrop}>
@@ -384,7 +387,9 @@ function prepareIncomingFiles(selectedFiles) {
 function isAllowedFileType(file) { return new Set(['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/png']).has(file.type); }
 
 function validateSubmission({ customerName, files }) {
-    if (!customerName.trim()) return 'Enter your name.';
+    if (!customerName.trim()) return 'Enter your full name.';
+    const nameParts = customerName.trim().split(/\s+/);
+    if (nameParts.length < 2 || nameParts[1].length < 1) return 'Enter your full name (first and last name).';
     if (files.length === 0) return 'Add at least one file.';
     for (const item of files) {
         if (!item.file.type.startsWith('image/') && item.pageMode === 'custom' && !item.colorPages.trim() && !item.bwPages.trim()) return `Add page ranges for ${item.file.name}.`;

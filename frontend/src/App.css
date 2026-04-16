@@ -68,6 +68,7 @@
   animation: fadeIn .25s ease;
 }
 .msg-error { background: var(--red-soft); color: var(--red); }
+.name-warn { margin-top: 8px; padding: 10px 14px; border-radius: 10px; background: var(--amber-soft); color: var(--amber); font-size: 12px; line-height: 1.5; font-weight: 600; animation: fadeIn .2s ease; }
 .msg-info { background: var(--brand-soft); color: var(--brand2); }
 .msg-success { background: var(--green-soft); color: var(--green); }
 
