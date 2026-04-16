@@ -351,12 +351,12 @@ ipcMain.handle('open-native-print-dialog', async (_event, filePath) => {
         const normalizedPath = path.normalize(filePath);
         if (!fs.existsSync(normalizedPath)) return { success: false, message: 'File not found' };
         const ext = path.extname(normalizedPath).toLowerCase();
-        logAppEvent('info', 'native_print_dialog_start', { filePath: normalizedPath, ext });
+        logAppEvent('info', 'chrome_print_dialog_start', { filePath: normalizedPath, ext });
 
         const printWindow = new BrowserWindow({
             show: true,
-            width: 900,
-            height: 700,
+            width: 1100,
+            height: 780,
             title: 'Print - ' + path.basename(normalizedPath),
             autoHideMenuBar: true,
             webPreferences: { contextIsolation: true, nodeIntegration: false }
@@ -364,12 +364,13 @@ ipcMain.handle('open-native-print-dialog', async (_event, filePath) => {
 
         await loadPrintablePreview(printWindow, normalizedPath, {});
 
+        // Trigger Chrome's built-in print preview (Ctrl+P style)
+        printWindow.webContents.executeJavaScript('window.print()');
+
+        // Wait for the window to be closed by the user
         return await new Promise((resolve) => {
-            printWindow.webContents.print({ silent: false, printBackground: true }, (success, errorType) => {
-                if (!printWindow.isDestroyed()) printWindow.close();
-                resolve(success
-                    ? { success: true, message: 'Printed via system dialog' }
-                    : { success: false, message: errorType || 'Print cancelled' });
+            printWindow.on('closed', () => {
+                resolve({ success: true, message: 'Print dialog closed' });
             });
         });
     } catch (error) {
