@@ -277,7 +277,11 @@ ipcMain.handle('start-service', async () => {
 });
 
 ipcMain.handle('update-job-status', async (_event, payload) => {
-    return postToBackend('/job/update-status', payload);
+    const result = await postToBackend('/job/update-status', payload);
+    if (result.success && payload?.status === 'failed' && payload?.jobId) {
+        queuedJobs.delete(payload.jobId);
+    }
+    return result;
 });
 
 ipcMain.handle('complete-job', async (_event, payload) => {

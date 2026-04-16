@@ -611,11 +611,19 @@ async function confirmPrint() {
             renderOrders();
             closePrintModal();
         } else {
-            alert('No pages were printed');
             await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'failed', error: 'print_skipped:no_pages_selected' });
+            const skippedIdx = orders.findIndex((item) => item.id === orderId);
+            if (skippedIdx !== -1) orders.splice(skippedIdx, 1);
+            renderOrders();
+            closePrintModal();
+            alert('No pages were printed. Job will be retried automatically.');
         }
     } catch (error) {
         await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'failed', error: `print_failed:${error.message}` });
+        const failedIdx = orders.findIndex((item) => item.id === orderId);
+        if (failedIdx !== -1) orders.splice(failedIdx, 1);
+        renderOrders();
+        closePrintModal();
         alert('Print error: ' + error.message);
     }
 }

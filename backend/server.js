@@ -6,7 +6,7 @@ const { Client } = pg;
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 const JOB_FETCH_LIMIT = 20;
 const MAX_RETRIES = 5;
-const STUCK_JOB_TIMEOUT_MINUTES = 15;
+const STUCK_JOB_TIMEOUT_MINUTES = 5;
 const UPLOAD_TICKET_TTL_SECONDS = 10 * 60;
 const PUBLIC_SHOP_CACHE_TTL_SECONDS = 30;
 const ALLOWED_FILE_TYPES = new Set([
@@ -559,7 +559,7 @@ async function claimPendingJobs(db, shopCode, requestId, userId, env) {
     try {
         const stale = await db.query(
             `UPDATE jobs
-             SET status = 'failed',
+             SET status = CASE WHEN retry_count + 1 >= ${MAX_RETRIES} THEN 'failed' ELSE 'pending' END,
                  retry_count = retry_count + 1,
                  last_attempt_at = NOW(),
                  last_error = 'job_timeout',
@@ -573,13 +573,28 @@ async function claimPendingJobs(db, shopCode, requestId, userId, env) {
         );
 
         for (const row of stale.rows) {
-            await recordFailure(db, {
-                requestId,
-                jobId: row.id,
-                userId,
-                error: 'job_timeout_dead_lettered'
-            });
+            if (row.status === 'failed') {
+                await recordFailure(db, {
+                    requestId,
+                    jobId: row.id,
+                    userId,
+                    error: 'job_timeout_dead_lettered'
+                });
+            }
         }
+
+        await db.query(
+            `UPDATE jobs
+             SET status = 'pending',
+                 retry_count = retry_count + 1,
+                 last_error = 'auto_retry',
+                 updated_at = NOW()
+             WHERE shop_code = $1
+               AND status = 'failed'
+               AND retry_count < ${MAX_RETRIES}
+               AND updated_at < NOW() - INTERVAL '2 minutes'`,
+            [shopCode]
+        );
 
         const claimed = await db.query(
             `WITH candidates AS (
