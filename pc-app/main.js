@@ -328,7 +328,37 @@ ipcMain.handle('print-file', async (_event, filePath, options) => {
     });
     return printFile(filePath, options);
 });
-ipcMain.handle('open-native-print-dialog', async () => ({ success: false, message: 'Native print dialog is not used in the new flow.' }));
+ipcMain.handle('open-native-print-dialog', async (_event, filePath) => {
+    try {
+        const normalizedPath = path.normalize(filePath);
+        if (!fs.existsSync(normalizedPath)) return { success: false, message: 'File not found' };
+        const ext = path.extname(normalizedPath).toLowerCase();
+        logAppEvent('info', 'native_print_dialog_start', { filePath: normalizedPath, ext });
+
+        const printWindow = new BrowserWindow({
+            show: true,
+            width: 900,
+            height: 700,
+            title: 'Print - ' + path.basename(normalizedPath),
+            autoHideMenuBar: true,
+            webPreferences: { contextIsolation: true, nodeIntegration: false }
+        });
+
+        await loadPrintablePreview(printWindow, normalizedPath, {});
+
+        return await new Promise((resolve) => {
+            printWindow.webContents.print({ silent: false, printBackground: true }, (success, errorType) => {
+                if (!printWindow.isDestroyed()) printWindow.close();
+                resolve(success
+                    ? { success: true, message: 'Printed via system dialog' }
+                    : { success: false, message: errorType || 'Print cancelled' });
+            });
+        });
+    } catch (error) {
+        logAppEvent('error', 'native_print_dialog_failed', { filePath, error: error.message });
+        return { success: false, message: error.message };
+    }
+});
 ipcMain.handle('delete-file', async (_event, filePath) => deleteFile(filePath));
 
 async function confirmAndCloseApp() {
@@ -569,20 +599,23 @@ async function printFile(filePath, options) {
             isVirtualPdfPrinter: isVirtualPdfPrinter(printerName)
         });
         if (ext === '.pdf') {
-            const printOptions = { printer: printerName, copies: Math.max(1, Number(options.copies || 1)), paperSize: options.paperSize || 'A4' };
-            const pageRanges = normalizePageRanges(options.pageRanges || '');
-            if (pageRanges) printOptions.pages = pageRanges.replace(/\s/g, '');
-            if (options.orientation === 'landscape') printOptions.landscape = true;
-            if (options.duplex === 'long-edge') printOptions.side = 'duplexlong';
-            if (options.duplex === 'short-edge') printOptions.side = 'duplexshort';
-            if (options.scale === 'actual') printOptions.scale = 'noscale';
-            logAppEvent('info', 'print_pdf_start', {
-                filePath: normalizedPath,
-                printerName,
-                printOptions
+            logAppEvent('info', 'print_pdf_start', { filePath: normalizedPath, printerName });
+            const pdfWindow = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false, plugins: true } });
+            await pdfWindow.loadURL(pathToFileURL(normalizedPath).toString());
+            return await new Promise((resolve) => {
+                pdfWindow.webContents.print({
+                    silent: false,
+                    printBackground: true,
+                    deviceName: printerName,
+                    color: options.isColor !== false,
+                    landscape: options.orientation === 'landscape',
+                    copies: Math.max(1, Number(options.copies || 1)),
+                    pageSize: options.paperSize || 'A4'
+                }, (success, errorType) => {
+                    if (!pdfWindow.isDestroyed()) pdfWindow.close();
+                    resolve(success ? { success: true, message: `Sent to ${printerName}` } : { success: false, message: errorType || 'Print cancelled or failed' });
+                });
             });
-            await pdfPrinter.print(normalizedPath, printOptions);
-            return { success: true, message: `Print job sent to ${printerName}` };
         }
         if (isOfficeDocument(normalizedPath)) {
             return { success: false, message: 'DOC and DOCX printing is not supported directly in the desktop app yet. Convert to PDF first.' };
@@ -594,7 +627,7 @@ async function printFile(filePath, options) {
         await loadPrintablePreview(printWindow, normalizedPath, options);
         return await new Promise((resolve) => {
             printWindow.webContents.print({
-                silent: true,
+                silent: false,
                 printBackground: true,
                 deviceName: printerName,
                 color: options.isColor !== false,
@@ -602,8 +635,8 @@ async function printFile(filePath, options) {
                 copies: Math.max(1, Number(options.copies || 1)),
                 pageSize: options.paperSize || 'A4'
             }, (success, errorType) => {
-                printWindow.close();
-                resolve(success ? { success: true } : { success: false, message: errorType || 'Print failed' });
+                if (!printWindow.isDestroyed()) printWindow.close();
+                resolve(success ? { success: true, message: `Sent to ${printerName}` } : { success: false, message: errorType || 'Print cancelled or failed' });
             });
         });
     } catch (error) {

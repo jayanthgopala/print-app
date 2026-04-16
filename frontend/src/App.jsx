@@ -40,27 +40,13 @@ export default function App() {
         const params = new URLSearchParams(window.location.search);
         const id = params.get('shop');
         const shared = params.get('shared');
-
         if (id) setShopId(id);
+        if (shared === 'true' || window.location.pathname === '/share') handleSharedFiles();
 
-        if (shared === 'true' || window.location.pathname === '/share') {
-            handleSharedFiles();
-        }
-
-        const onBeforeInstallPrompt = (e) => {
-            e.preventDefault();
-            setInstallPrompt(e);
-            setShowInstallBanner(true);
-        };
-        const onServiceWorkerMessage = (event) => {
-            if (event.data?.type === 'SHARED_FILES_READY') {
-                handleSharedFiles();
-            }
-        };
-
+        const onBeforeInstallPrompt = (e) => { e.preventDefault(); setInstallPrompt(e); setShowInstallBanner(true); };
+        const onServiceWorkerMessage = (event) => { if (event.data?.type === 'SHARED_FILES_READY') handleSharedFiles(); };
         window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
         navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage);
-
         return () => {
             window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
             navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage);
@@ -68,15 +54,9 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-        if (!connectedShopId || !API_URL) {
-            return undefined;
-        }
-
+        if (!connectedShopId || !API_URL) return undefined;
         const pollMs = status === 'OFFLINE' ? 5000 : 15000;
-        const interval = window.setInterval(() => {
-            void fetchShopStatus(connectedShopId, { silent: true });
-        }, pollMs);
-
+        const interval = window.setInterval(() => { void fetchShopStatus(connectedShopId, { silent: true }); }, pollMs);
         return () => window.clearInterval(interval);
     }, [connectedShopId, status]);
 
@@ -85,756 +65,350 @@ export default function App() {
         const sharedText = params.get('text');
         const sharedTitle = params.get('title');
         const sharedUrl = params.get('url');
-
-        if (sharedTitle || sharedText || sharedUrl) {
-            setStatus('SHARED_MODE');
-            if (sharedText) setCustomerName(sharedText.substring(0, 50));
-        }
-
+        if (sharedTitle || sharedText || sharedUrl) { setStatus('SHARED_MODE'); if (sharedText) setCustomerName(sharedText.substring(0, 50)); }
         try {
             const sharedFiles = await takePendingSharedFiles();
             if (sharedFiles.length > 0) {
                 const preparedFiles = prepareIncomingFiles(sharedFiles);
-                if (preparedFiles.validFiles.length > 0) {
-                    setFiles((current) => [...current, ...preparedFiles.validFiles]);
-                    setInfoMessage(`Loaded ${preparedFiles.validFiles.length} shared file${preparedFiles.validFiles.length > 1 ? 's' : ''}.`);
-                    setErrorMessage(preparedFiles.invalidFiles.join(' | '));
-                    setStatus('SHARED_MODE');
-                } else if (preparedFiles.invalidFiles.length > 0) {
-                    setErrorMessage(preparedFiles.invalidFiles.join(' | '));
-                }
+                if (preparedFiles.validFiles.length > 0) { setFiles((c) => [...c, ...preparedFiles.validFiles]); setInfoMessage(`Loaded ${preparedFiles.validFiles.length} shared file(s).`); setErrorMessage(preparedFiles.invalidFiles.join(' | ')); setStatus('SHARED_MODE'); }
+                else if (preparedFiles.invalidFiles.length > 0) setErrorMessage(preparedFiles.invalidFiles.join(' | '));
             }
-        } catch {
-            setErrorMessage('Shared files could not be loaded on this device.');
-        }
-
+        } catch { setErrorMessage('Shared files could not be loaded.'); }
         const url = new URL(window.location.href);
-        const shopParam = url.searchParams.get('shop') || '';
-        window.history.replaceState({}, '', `/?shop=${shopParam}&shared=true`);
+        window.history.replaceState({}, '', `/?shop=${url.searchParams.get('shop') || ''}&shared=true`);
     };
 
-    const handleInstall = async () => {
-        if (!installPrompt) return;
-        installPrompt.prompt();
-        const { outcome } = await installPrompt.userChoice;
-        if (outcome === 'accepted') {
-            setShowInstallBanner(false);
-        }
-        setInstallPrompt(null);
-    };
+    const handleInstall = async () => { if (!installPrompt) return; installPrompt.prompt(); const { outcome } = await installPrompt.userChoice; if (outcome === 'accepted') setShowInstallBanner(false); setInstallPrompt(null); };
 
     const fetchShopStatus = async (inputShopId, options = {}) => {
         const normalizedShopId = normalizeShopCode(inputShopId);
-        if (!normalizedShopId) {
-            setErrorMessage('Enter a valid shop code before connecting.');
-            return false;
-        }
-
-        if (!API_URL) {
-            setErrorMessage('Frontend API is not configured.');
-            return false;
-        }
-
-        if (!options.silent) {
-            setErrorMessage('');
-            setInfoMessage('Checking shop status...');
-            setIsConnecting(true);
-            setPricing(null);
-        }
+        if (!normalizedShopId) { setErrorMessage('Enter a valid shop code.'); return false; }
+        if (!API_URL) { setErrorMessage('API is not configured.'); return false; }
+        if (!options.silent) { setErrorMessage(''); setInfoMessage('Connecting...'); setIsConnecting(true); setPricing(null); }
         setShopId(normalizedShopId);
-
         try {
             const response = await fetch(`${API_URL}/shop/public/${encodeURIComponent(normalizedShopId)}`, { cache: 'no-store' });
             const data = await response.json().catch(() => ({}));
-
-            if (!response.ok) {
-                setConnectedShopId('');
-                setStatus('DISCONNECTED');
-                setInfoMessage('');
-                setErrorMessage(data.error || 'Shop details could not be loaded.');
-                return false;
-            }
-
-            if (!data.shop) {
-                setConnectedShopId('');
-                setStatus('DISCONNECTED');
-                setInfoMessage('');
-                setErrorMessage('Shop details could not be loaded.');
-                return false;
-            }
-
+            if (!response.ok || !data.shop) { setConnectedShopId(''); setStatus('DISCONNECTED'); setInfoMessage(''); setErrorMessage(data.error || 'Shop not found.'); return false; }
             setConnectedShopId(normalizedShopId);
             setPricing(data.shop);
-            if (data.shop.status === 'online') {
-                setStatus('ONLINE');
-                setErrorMessage('');
-                setInfoMessage('Shop is online. You can upload files now.');
-            } else {
-                setStatus('OFFLINE');
-                setInfoMessage('');
-                if (!options.silent || status !== 'OFFLINE') {
-                    setErrorMessage('Shop is offline right now.');
-                }
-            }
-
+            if (data.shop.status === 'online') { setStatus('ONLINE'); setErrorMessage(''); setInfoMessage('Shop is online. Upload your files.'); }
+            else { setStatus('OFFLINE'); setInfoMessage(''); if (!options.silent || status !== 'OFFLINE') setErrorMessage('Shop is offline right now.'); }
             return true;
-        } catch {
-            if (!options.silent) {
-                setErrorMessage('Could not load shop pricing.');
-            }
-            return false;
-        } finally {
-            if (!options.silent) {
-                setIsConnecting(false);
-            }
-        }
+        } catch { if (!options.silent) setErrorMessage('Could not reach the shop.'); return false; }
+        finally { if (!options.silent) setIsConnecting(false); }
     };
 
-    const handleConnect = () => {
-        void fetchShopStatus(shopId);
-    };
-
-    const appendFiles = (selectedFiles) => {
-        const { validFiles, invalidFiles } = prepareIncomingFiles(selectedFiles);
-
-        setErrorMessage(invalidFiles.join(' | '));
-        if (validFiles.length > 0) {
-            setFiles((current) => [...current, ...validFiles]);
-            setInfoMessage(`Added ${validFiles.length} file${validFiles.length > 1 ? 's' : ''}.`);
-        }
-    };
-
-    const handleFileSelect = (e) => {
-        appendFiles(Array.from(e.target.files || []));
-        e.target.value = '';
-    };
-
-    const handleDrop = (e) => {
-        e.preventDefault();
-        setIsDragActive(false);
-        appendFiles(Array.from(e.dataTransfer.files || []));
-    };
-
-    const updateFilePages = (index, field, value) => {
-        const updated = [...files];
-        updated[index][field] = value;
-        setFiles(updated);
-    };
-
-    const updateFileOption = (index, field, value) => {
-        const updated = [...files];
-        updated[index][field] = value;
-        setFiles(updated);
-    };
-
-    const deleteFile = (index) => {
-        setFiles(files.filter((_, i) => i !== index));
-    };
+    const handleConnect = () => { void fetchShopStatus(shopId); };
+    const appendFiles = (selectedFiles) => { const { validFiles, invalidFiles } = prepareIncomingFiles(selectedFiles); setErrorMessage(invalidFiles.join(' | ')); if (validFiles.length > 0) { setFiles((c) => [...c, ...validFiles]); setInfoMessage(`Added ${validFiles.length} file(s).`); } };
+    const handleFileSelect = (e) => { appendFiles(Array.from(e.target.files || [])); e.target.value = ''; };
+    const handleDrop = (e) => { e.preventDefault(); setIsDragActive(false); appendFiles(Array.from(e.dataTransfer.files || [])); };
+    const updateFileOption = (index, field, value) => { const u = [...files]; u[index][field] = value; setFiles(u); };
+    const updateFilePages = (index, field, value) => { const u = [...files]; u[index][field] = value; setFiles(u); };
+    const deleteFile = (index) => { setFiles(files.filter((_, i) => i !== index)); };
 
     const handleSend = async () => {
-        if (!connectedShopId) {
-            setErrorMessage('Connect to a shop before sending files.');
-            return;
-        }
-
-        const validationError = validateSubmission({
-            customerName,
-            files
-        });
-        if (validationError) {
-            setErrorMessage(validationError);
-            return;
-        }
-
-        setCurrentFile(0);
-        setTotalFiles(files.length);
-        setStatus('CONNECTING');
-        setErrorMessage('');
-        setInfoMessage('Preparing files for transfer...');
-        setIsSending(true);
-        setProgress(0);
-
+        if (!connectedShopId) { setErrorMessage('Connect to a shop first.'); return; }
+        const validationError = validateSubmission({ customerName, files });
+        if (validationError) { setErrorMessage(validationError); return; }
+        setCurrentFile(0); setTotalFiles(files.length); setStatus('CONNECTING'); setErrorMessage(''); setInfoMessage('Preparing...'); setIsSending(true); setProgress(0);
         try {
             for (let i = 0; i < files.length; i++) {
-                setCurrentFile(i + 1);
-                setStatus('TRANSFERRING');
+                setCurrentFile(i + 1); setStatus('TRANSFERRING');
                 const item = files[i];
                 const uploadPlan = await createUploadPlan(connectedShopId, item.file);
                 await uploadFileToR2(uploadPlan.uploadUrl, item.file, setProgress);
                 await createJobRecord(connectedShopId, item, uploadPlan);
-                await new Promise((resolve) => setTimeout(resolve, 400));
+                await new Promise((r) => setTimeout(r, 400));
             }
-            setSentFileCount(files.length);
-            setFiles([]);
-            setCurrentFile(0);
-            setTotalFiles(0);
-            setProgress(100);
-            setStatus('COMPLETED');
-            setInfoMessage('');
-            setErrorMessage('');
-        } catch (error) {
-            console.error('Transfer failed:', error);
-            setStatus('ERROR');
-            setErrorMessage(error.message || 'Transfer failed.');
-            setInfoMessage('Transfer stopped. Retry only when you are ready.');
-        } finally {
-            setIsSending(false);
-        }
+            setSentFileCount(files.length); setFiles([]); setCurrentFile(0); setTotalFiles(0); setProgress(100); setStatus('COMPLETED'); setInfoMessage(''); setErrorMessage('');
+        } catch (error) { setStatus('ERROR'); setErrorMessage(error.message || 'Transfer failed.'); setInfoMessage(''); }
+        finally { setIsSending(false); }
     };
 
-    const handleRetrySend = () => {
-        void handleSend();
-    };
-
-    const handleSendMore = () => {
-        setFiles([]);
-        setCurrentFile(0);
-        setTotalFiles(0);
-        setSentFileCount(0);
-        setProgress(0);
-        setCustomerName('');
-        setErrorMessage('');
-        setInfoMessage('Shop is online. You can upload files now.');
-        setStatus('ONLINE');
-    };
+    const handleSendMore = () => { setFiles([]); setCurrentFile(0); setTotalFiles(0); setSentFileCount(0); setProgress(0); setCustomerName(''); setErrorMessage(''); setInfoMessage('Shop is online. Upload your files.'); setStatus('ONLINE'); };
 
     const showConnectedPanel = ['ONLINE', 'CONNECTING', 'TRANSFERRING', 'ERROR'].includes(status);
     const canSend = !isSending && status !== 'OFFLINE' && customerName.trim() && files.length > 0;
 
+    const getFileIcon = (type) => {
+        if (type === 'application/pdf') return { cls: 'pdf', letter: 'P' };
+        if (type.startsWith('image/')) return { cls: 'img', letter: 'I' };
+        return { cls: 'doc', letter: 'D' };
+    };
+
     return (
-        <div className="container">
-            <div className="card">
-                <h1>Send Files to Print</h1>
-                <p className="hero-copy">Fast direct file transfer to your print shop with full print instructions.</p>
+        <div className="app">
+            <div className="header">
+                <div className="header-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#6366f1' }}>
+                        <polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" />
+                    </svg>
+                </div>
+                <h1>Send to Print</h1>
+                <p>Upload files with print instructions directly to your shop.</p>
+            </div>
 
-                {(errorMessage || infoMessage) && (
-                    <div className={`message-banner ${errorMessage ? 'error' : 'info'}`}>
-                        {errorMessage || infoMessage}
-                    </div>
-                )}
+            {showInstallBanner && (
+                <div className="install-banner">
+                    <div className="install-banner-text"><strong>Install App</strong>Share files from WhatsApp, Photos and more.</div>
+                    <button onClick={handleInstall} className="btn-sm">Install</button>
+                    <button onClick={() => setShowInstallBanner(false)} className="btn-x">X</button>
+                </div>
+            )}
 
-                {showInstallBanner && (
-                    <div className="install-banner">
-                        <div className="install-text">
-                            <strong>Install App</strong>
-                            <p>Add to home screen to share files directly from WhatsApp, Photos and more.</p>
-                        </div>
-                        <div className="install-buttons">
-                            <button onClick={handleInstall} className="btn-install">Install</button>
-                            <button onClick={() => setShowInstallBanner(false)} className="btn-close">X</button>
-                        </div>
-                    </div>
-                )}
+            {errorMessage && <div className="msg msg-error">{errorMessage}</div>}
+            {infoMessage && !errorMessage && <div className="msg msg-info">{infoMessage}</div>}
 
-                {status === 'SHARED_MODE' && (
-                    <div className="shared-mode-section">
-                        <div className="shared-files-notice">
-                            <h2>Files Ready to Upload</h2>
-                            <p>Select your print shop to continue</p>
-                        </div>
-
-                        <div className="shop-select-options">
-                            <button
-                                onClick={() => setShowQRScanner(true)}
-                                className="btn-primary"
-                                style={{ marginBottom: '10px' }}
-                            >
-                                Scan Shop QR Code
-                            </button>
-
-                            <div className="divider">OR</div>
-
-                            <input
-                                type="text"
-                                placeholder="Enter Shop Code (e.g., SHOP001)"
-                                value={shopId}
-                                onChange={(e) => setShopId(e.target.value.toUpperCase())}
-                                className="input"
-                            />
-                            <button
-                                onClick={handleConnect}
-                                className="btn-primary"
-                                disabled={!shopId || isConnecting}
-                            >
-                                {isConnecting ? 'Connecting...' : 'Connect and Upload'}
-                            </button>
-                        </div>
-
-                        {showQRScanner && (
-                            <div className="qr-scanner-modal">
-                                <div className="qr-scanner-content">
-                                    <button
-                                        onClick={() => setShowQRScanner(false)}
-                                        className="btn-close-modal"
-                                    >
-                                        X
-                                    </button>
-                                    <h3>Scan Shop QR Code</h3>
-                                    <div className="qr-scanner-box">
-                                        <div className="qr-placeholder">Camera access coming soon</div>
-                                        <p style={{ marginTop: '15px', fontSize: '13px', color: '#666' }}>
-                                            For now, please use the manual entry option above
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {status === 'DISCONNECTED' && (
+            {/* ── Shared Mode ── */}
+            {status === 'SHARED_MODE' && (
+                <div className="card">
+                    <div className="shared-banner"><h2>Files Ready</h2><p>Connect to your print shop to continue.</p></div>
                     <div className="connect-section">
-                        <input
-                            type="text"
-                            placeholder="Enter Shop Code (e.g., SHOP001)"
-                            value={shopId}
-                            onChange={(e) => setShopId(e.target.value.toUpperCase())}
-                            className="input"
-                        />
-                        <button onClick={handleConnect} className="btn-primary" disabled={!shopId || isConnecting}>
-                            {isConnecting ? 'Connecting...' : 'Connect'}
-                        </button>
+                        <input type="text" placeholder="Enter Shop Code (e.g. SHOP001)" value={shopId} onChange={(e) => setShopId(e.target.value.toUpperCase())} className="input" />
+                        <button onClick={handleConnect} className="btn btn-brand" disabled={!shopId || isConnecting}>{isConnecting ? 'Connecting...' : 'Connect'}</button>
                     </div>
-                )}
+                </div>
+            )}
 
-                {showConnectedPanel && (
-                    <>
-                        <div className={`status ${status === 'ERROR' ? 'offline' : 'online'}`}>
-                            {status === 'ONLINE' && 'Shop Online'}
-                            {status === 'CONNECTING' && 'Preparing Upload'}
-                            {status === 'TRANSFERRING' && 'Transferring'}
-                            {status === 'COMPLETED' && 'Files Sent Successfully'}
-                            {status === 'ERROR' && 'Transfer Failed'}
+            {/* ── Disconnected ── */}
+            {status === 'DISCONNECTED' && (
+                <div className="card">
+                    <div className="connect-section">
+                        <input type="text" placeholder="Enter Shop Code (e.g. SHOP001)" value={shopId} onChange={(e) => setShopId(e.target.value.toUpperCase())} className="input" />
+                        <button onClick={handleConnect} className="btn btn-brand" disabled={!shopId || isConnecting}>{isConnecting ? 'Connecting...' : 'Connect to Shop'}</button>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Offline ── */}
+            {status === 'OFFLINE' && <div className="status-chip offline">Shop Offline</div>}
+
+            {/* ── Connected Panel ── */}
+            {showConnectedPanel && (
+                <>
+                    <div className={`status-chip ${status === 'ERROR' ? 'error' : status === 'TRANSFERRING' || status === 'CONNECTING' ? 'transfer' : 'online'}`}>
+                        {status === 'ONLINE' && 'Shop Online'}
+                        {status === 'CONNECTING' && 'Preparing Upload'}
+                        {status === 'TRANSFERRING' && 'Transferring'}
+                        {status === 'ERROR' && 'Transfer Failed'}
+                    </div>
+
+                    {pricing && (
+                        <div className="pricing-row">
+                            <div className="pricing-chip"><strong>Rs {pricing.colorPrice}</strong>Color / page</div>
+                            <div className="pricing-chip"><strong>Rs {pricing.bwPrice}</strong>B&W / page</div>
                         </div>
+                    )}
 
-                        {pricing && (
-                            <div className="pricing">
-                                <strong>Pricing:</strong> Color: Rs {pricing.colorPrice}/page | B&W: Rs {pricing.bwPrice}/page
-                            </div>
-                        )}
+                    <div className="card">
+                        <input type="text" placeholder="Your Name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="input" maxLength={50} />
+                    </div>
 
-                        <input
-                            type="text"
-                            placeholder="Your Name"
-                            value={customerName}
-                            onChange={(e) => setCustomerName(e.target.value)}
-                            className="input"
-                            maxLength={50}
-                        />
+                    <label className={`file-picker ${isDragActive ? 'active' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragActive(true); }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setIsDragActive(false); }} onDrop={handleDrop}>
+                        <input type="file" multiple onChange={handleFileSelect} className="file-input" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" />
+                        <div className="file-picker-icon">+</div>
+                        <div className="file-picker-title">Choose files or drag here</div>
+                        <div className="file-picker-sub">PDF, DOC, DOCX, JPG, PNG up to 100 MB</div>
+                    </label>
 
-                        <label
-                            className={`file-picker ${isDragActive ? 'drag-active' : ''}`}
-                            onDragOver={(e) => {
-                                e.preventDefault();
-                                setIsDragActive(true);
-                            }}
-                            onDragLeave={(e) => {
-                                if (!e.currentTarget.contains(e.relatedTarget)) {
-                                    setIsDragActive(false);
-                                }
-                            }}
-                            onDrop={handleDrop}
-                        >
-                            <input
-                                type="file"
-                                multiple
-                                onChange={handleFileSelect}
-                                className="file-input"
-                                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                            />
-                            <span className="file-picker-title">Choose files or drag them here</span>
-                            <span className="file-picker-copy">PDF, DOC, DOCX, JPG, JPEG, PNG up to 100 MB each</span>
-                        </label>
-
-                        {files.length > 0 && (
-                            <div className="files-list">
-                                {files.map((item, i) => (
-                                    <div key={i} className="file-item">
-                                        <div className="file-name">
-                                            {item.file.name}
-                                            <span className="file-type-badge">
-                                                {item.file.type.startsWith('image/') ? 'Image' : 'Document'}
-                                            </span>
-                                            <button
-                                                onClick={() => deleteFile(i)}
-                                                className="btn-delete"
-                                                title="Remove file"
-                                            >
-                                                X
-                                            </button>
+                    {files.length > 0 && (
+                        <div className="file-list">
+                            {files.map((item, i) => {
+                                const icon = getFileIcon(item.file.type);
+                                const isImage = item.file.type.startsWith('image/');
+                                return (
+                                    <div key={i} className="file-card">
+                                        <div className="file-card-header">
+                                            <div className={`file-card-icon ${icon.cls}`}>{icon.letter}</div>
+                                            <div className="file-card-name">{item.file.name}</div>
+                                            <span className="file-card-badge">{isImage ? 'Image' : 'Doc'}</span>
+                                            <button onClick={() => deleteFile(i)} className="btn-remove">X</button>
                                         </div>
-                                        <>
-                                            {item.file.type.startsWith('image/') ? (
-                                                <div className="print-type-selector">
-                                                    <label className="print-type-label">Image Print</label>
-                                                    <div className="radio-group">
-                                                        <label className="radio-option">
-                                                            <input
-                                                                type="radio"
-                                                                name={`imageMode-${i}`}
-                                                                value="color"
-                                                                checked={item.imageMode === 'color'}
-                                                                onChange={() => updateFileOption(i, 'imageMode', 'color')}
-                                                            />
-                                                            <span>Full Color</span>
+
+                                        {isImage ? (
+                                            <div className="opt-section">
+                                                <div className="opt-label">Print Mode</div>
+                                                <div className="opt-pills">
+                                                    <label className={`opt-pill ${item.imageMode === 'color' ? 'selected' : ''}`}>
+                                                        <input type="radio" name={`img-${i}`} checked={item.imageMode === 'color'} onChange={() => updateFileOption(i, 'imageMode', 'color')} />Color
+                                                    </label>
+                                                    <label className={`opt-pill ${item.imageMode === 'bw' ? 'selected' : ''}`}>
+                                                        <input type="radio" name={`img-${i}`} checked={item.imageMode === 'bw'} onChange={() => updateFileOption(i, 'imageMode', 'bw')} />B&W
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="opt-section">
+                                                    <div className="opt-label">Page Mode</div>
+                                                    <div className="opt-pills">
+                                                        <label className={`opt-pill ${item.pageMode === 'custom' ? 'selected' : ''}`}>
+                                                            <input type="radio" name={`pm-${i}`} checked={item.pageMode === 'custom'} onChange={() => updateFileOption(i, 'pageMode', 'custom')} />Custom
                                                         </label>
-                                                        <label className="radio-option">
-                                                            <input
-                                                                type="radio"
-                                                                name={`imageMode-${i}`}
-                                                                value="bw"
-                                                                checked={item.imageMode === 'bw'}
-                                                                onChange={() => updateFileOption(i, 'imageMode', 'bw')}
-                                                            />
-                                                            <span>Full Black & White</span>
+                                                        <label className={`opt-pill ${item.pageMode === 'all-color' ? 'selected' : ''}`}>
+                                                            <input type="radio" name={`pm-${i}`} checked={item.pageMode === 'all-color'} onChange={() => updateFileOption(i, 'pageMode', 'all-color')} />All Color
+                                                        </label>
+                                                        <label className={`opt-pill ${item.pageMode === 'all-bw' ? 'selected' : ''}`}>
+                                                            <input type="radio" name={`pm-${i}`} checked={item.pageMode === 'all-bw'} onChange={() => updateFileOption(i, 'pageMode', 'all-bw')} />All B&W
                                                         </label>
                                                     </div>
                                                 </div>
-                                            ) : (
-                                                <>
-                                                    <div className="print-type-selector">
-                                                        <label className="print-type-label">Document Print</label>
-                                                        <div className="radio-group">
-                                                            <label className="radio-option">
-                                                                <input
-                                                                    type="radio"
-                                                                    name={`pageMode-${i}`}
-                                                                    value="custom"
-                                                                    checked={item.pageMode === 'custom'}
-                                                                    onChange={() => updateFileOption(i, 'pageMode', 'custom')}
-                                                                />
-                                                                <span>Custom Pages</span>
-                                                            </label>
-                                                            <label className="radio-option">
-                                                                <input
-                                                                    type="radio"
-                                                                    name={`pageMode-${i}`}
-                                                                    value="all-color"
-                                                                    checked={item.pageMode === 'all-color'}
-                                                                    onChange={() => updateFileOption(i, 'pageMode', 'all-color')}
-                                                                />
-                                                                <span>All Pages Color</span>
-                                                            </label>
-                                                            <label className="radio-option">
-                                                                <input
-                                                                    type="radio"
-                                                                    name={`pageMode-${i}`}
-                                                                    value="all-bw"
-                                                                    checked={item.pageMode === 'all-bw'}
-                                                                    onChange={() => updateFileOption(i, 'pageMode', 'all-bw')}
-                                                                />
-                                                                <span>All Pages B&W</span>
-                                                            </label>
+                                                {item.pageMode === 'custom' && (
+                                                    <div className="opt-grid">
+                                                        <div className="opt-field">
+                                                            <div className="opt-label">Color Pages</div>
+                                                            <input type="text" placeholder="e.g. 21,26-29" value={item.colorPages} onChange={(e) => updateFilePages(i, 'colorPages', e.target.value)} className="input-sm" />
+                                                        </div>
+                                                        <div className="opt-field">
+                                                            <div className="opt-label">B&W Pages</div>
+                                                            <input type="text" placeholder="e.g. 10-20,30-40" value={item.bwPages} onChange={(e) => updateFilePages(i, 'bwPages', e.target.value)} className="input-sm" />
                                                         </div>
                                                     </div>
-                                                    {item.pageMode === 'custom' && (
-                                                        <>
-                                                            <input
-                                                                type="text"
-                                                                placeholder="Color pages (e.g., 21,26-29)"
-                                                                value={item.colorPages}
-                                                                onChange={(e) => updateFilePages(i, 'colorPages', e.target.value)}
-                                                                className="input-small"
-                                                            />
-                                                            <input
-                                                                type="text"
-                                                                placeholder="B&W pages (e.g., 10-20,22-25,30-40)"
-                                                                value={item.bwPages}
-                                                                onChange={(e) => updateFilePages(i, 'bwPages', e.target.value)}
-                                                                className="input-small"
-                                                            />
-                                                        </>
-                                                    )}
-                                                </>
-                                            )}
-                                            <div className="print-type-selector">
-                                                <label className="print-type-label">Paper Size</label>
-                                                <select
-                                                    value={item.paperSize}
-                                                    onChange={(e) => updateFileOption(i, 'paperSize', e.target.value)}
-                                                    className="input-small"
-                                                >
-                                                    <option value="A4">A4</option>
-                                                    <option value="A3">A3</option>
-                                                    <option value="Letter">Letter</option>
-                                                    <option value="Legal">Legal</option>
-                                                </select>
-                                                <label className="print-type-label">Layout</label>
-                                                <select
-                                                    value={item.orientation}
-                                                    onChange={(e) => updateFileOption(i, 'orientation', e.target.value)}
-                                                    className="input-small"
-                                                >
-                                                    <option value="portrait">Portrait</option>
-                                                    <option value="landscape">Landscape</option>
-                                                </select>
-                                                <label className="print-type-label">Copies</label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    max="20"
-                                                    value={item.copies}
-                                                    onChange={(e) => updateFileOption(i, 'copies', e.target.value)}
-                                                    className="input-small"
-                                                />
-                                                <label className="print-type-label">Sides</label>
-                                                <select
-                                                    value={item.duplex}
-                                                    onChange={(e) => updateFileOption(i, 'duplex', e.target.value)}
-                                                    className="input-small"
-                                                >
-                                                    <option value="simplex">Single Side</option>
-                                                    <option value="long-edge">Both Sides</option>
-                                                </select>
-                                                <label className="print-type-label">Scale</label>
-                                                <select
-                                                    value={item.scale}
-                                                    onChange={(e) => updateFileOption(i, 'scale', e.target.value)}
-                                                    className="input-small"
-                                                >
-                                                    <option value="fit">Fit to Page</option>
-                                                    <option value="actual">Actual Size</option>
+                                                )}
+                                            </>
+                                        )}
+
+                                        <div className="opt-grid">
+                                            <div className="opt-field">
+                                                <div className="opt-label">Paper</div>
+                                                <select value={item.paperSize} onChange={(e) => updateFileOption(i, 'paperSize', e.target.value)} className="input-sm">
+                                                    <option value="A4">A4</option><option value="A3">A3</option><option value="Letter">Letter</option><option value="Legal">Legal</option>
                                                 </select>
                                             </div>
-                                        </>
+                                            <div className="opt-field">
+                                                <div className="opt-label">Layout</div>
+                                                <select value={item.orientation} onChange={(e) => updateFileOption(i, 'orientation', e.target.value)} className="input-sm">
+                                                    <option value="portrait">Portrait</option><option value="landscape">Landscape</option>
+                                                </select>
+                                            </div>
+                                            <div className="opt-field">
+                                                <div className="opt-label">Copies</div>
+                                                <input type="number" min="1" max="20" value={item.copies} onChange={(e) => updateFileOption(i, 'copies', e.target.value)} className="input-sm" />
+                                            </div>
+                                            <div className="opt-field">
+                                                <div className="opt-label">Sides</div>
+                                                <select value={item.duplex} onChange={(e) => updateFileOption(i, 'duplex', e.target.value)} className="input-sm">
+                                                    <option value="simplex">Single</option><option value="long-edge">Both Sides</option>
+                                                </select>
+                                            </div>
+                                        </div>
                                     </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {files.length > 0 && status !== 'ERROR' && (
-                            <button onClick={handleSend} className="btn-primary" disabled={!canSend}>
-                                {isSending ? `Sending ${currentFile || 1}/${totalFiles}` : `Send ${files.length} File${files.length > 1 ? 's' : ''} to Print`}
-                            </button>
-                        )}
-
-                        {status === 'ERROR' && files.length > 0 && (
-                            <button onClick={handleRetrySend} className="btn-primary" disabled={!canSend} style={{ marginTop: '10px' }}>
-                                Retry Send
-                            </button>
-                        )}
-
-                        {currentFile > 0 && totalFiles > 0 && (
-                            <div className="progress-section">
-                                <div className="progress-text">
-                                    Sending file {currentFile} of {totalFiles}
-                                </div>
-                                <div className="progress-bar">
-                                    <div className="progress-fill" style={{ width: `${progress}%` }} />
-                                </div>
-                                <div className="progress-percent">{Math.round(progress)}%</div>
-                            </div>
-                        )}
-                    </>
-                )}
-
-                {status === 'COMPLETED' && (
-                    <div className="success-page">
-                        <div className="success-icon">
-                            <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
-                                <circle cx="40" cy="40" r="40" fill="#d1fae5" />
-                                <path d="M24 42l10 10 22-24" stroke="#059669" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-                            </svg>
+                                );
+                            })}
                         </div>
-                        <h2 className="success-title">Files Sent Successfully</h2>
-                        <p className="success-detail">
-                            {sentFileCount} {sentFileCount === 1 ? 'file has' : 'files have'} been sent to the print shop.
-                        </p>
-                        <p className="success-shop">Shop: {connectedShopId}</p>
-                        <button onClick={handleSendMore} className="btn-primary" style={{ marginTop: '24px' }}>
-                            Send More Files to This Shop
-                        </button>
-                    </div>
-                )}
+                    )}
 
-                {status === 'OFFLINE' && (
-                    <div className="status offline">Shop Offline</div>
-                )}
-            </div>
+                    {currentFile > 0 && totalFiles > 0 && (
+                        <div className="progress-section">
+                            <div className="progress-top">
+                                <span>File {currentFile} of {totalFiles}</span>
+                                <span>{Math.round(progress)}%</span>
+                            </div>
+                            <div className="progress-bar"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
+                        </div>
+                    )}
+
+                    {files.length > 0 && status !== 'ERROR' && (
+                        <button onClick={handleSend} className="btn btn-green" disabled={!canSend}>
+                            {isSending ? `Sending ${currentFile || 1}/${totalFiles}` : `Send ${files.length} File${files.length > 1 ? 's' : ''}`}
+                        </button>
+                    )}
+
+                    {status === 'ERROR' && files.length > 0 && (
+                        <button onClick={() => void handleSend()} className="btn btn-brand" disabled={!canSend}>Retry Send</button>
+                    )}
+                </>
+            )}
+
+            {/* ── Success ── */}
+            {status === 'COMPLETED' && (
+                <div className="success-page">
+                    <div className="success-icon">
+                        <svg width="72" height="72" viewBox="0 0 72 72" fill="none">
+                            <circle cx="36" cy="36" r="36" fill="rgba(52,211,153,0.15)" />
+                            <path d="M22 38l9 9 19-21" stroke="#34d399" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                        </svg>
+                    </div>
+                    <h2 className="success-title">Sent Successfully</h2>
+                    <p className="success-detail">{sentFileCount} {sentFileCount === 1 ? 'file' : 'files'} sent to the print shop.</p>
+                    <p className="success-shop">{connectedShopId}</p>
+                    <button onClick={handleSendMore} className="btn btn-brand" style={{ marginTop: '24px', maxWidth: '320px' }}>Send More Files</button>
+                </div>
+            )}
         </div>
     );
 }
 
+// ── Helpers (unchanged) ──
+
 async function createUploadPlan(shopCode, file) {
-    const response = await fetch(`${API_URL}/upload-url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            shopCode,
-            fileName: file.name,
-            contentType: file.type || 'application/octet-stream',
-            fileSize: file.size
-        })
-    });
-
+    const response = await fetch(`${API_URL}/upload-url`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopCode, fileName: file.name, contentType: file.type || 'application/octet-stream', fileSize: file.size }) });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-        throw new Error(payload.error || 'Could not create upload URL');
-    }
-
+    if (!response.ok) throw new Error(payload.error || 'Could not create upload URL');
     return payload;
 }
 
 function uploadFileToR2(uploadUrl, file, onProgress) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('PUT', uploadUrl);
-        xhr.timeout = 45000;
-        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-
-        xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable && event.total > 0) {
-                onProgress((event.loaded / event.total) * 100);
-            }
-        };
-
-        xhr.onerror = () => reject(new Error('Upload to R2 failed.'));
-        xhr.ontimeout = () => reject(new Error('Upload to R2 timed out.'));
-        xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-                resolve();
-                return;
-            }
-
-            try {
-                const payload = JSON.parse(xhr.responseText || '{}');
-                reject(new Error(payload.error || 'Upload failed'));
-            } catch {
-                reject(new Error(xhr.responseText || 'Upload failed'));
-            }
-        };
-
+        xhr.open('PUT', uploadUrl); xhr.timeout = 45000; xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.upload.onprogress = (event) => { if (event.lengthComputable && event.total > 0) onProgress((event.loaded / event.total) * 100); };
+        xhr.onerror = () => reject(new Error('Upload failed.')); xhr.ontimeout = () => reject(new Error('Upload timed out.'));
+        xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) { resolve(); return; } try { reject(new Error(JSON.parse(xhr.responseText || '{}').error || 'Upload failed')); } catch { reject(new Error(xhr.responseText || 'Upload failed')); } };
         xhr.send(file);
     });
 }
 
 async function createJobRecord(shopCode, item, uploadPlan) {
-    const colorMode = item.file.type.startsWith('image/')
-        ? item.imageMode
-        : (item.pageMode === 'all-color' ? 'color' : 'bw');
-
-    const colorPages = item.file.type.startsWith('image/')
-        ? (item.imageMode === 'color' ? 'Full Image' : '')
-        : (item.pageMode === 'all-color' ? 'All Pages' : (item.colorPages || ''));
-
-    const bwPages = item.file.type.startsWith('image/')
-        ? (item.imageMode === 'bw' ? 'Full Image' : '')
-        : (item.pageMode === 'all-bw' ? 'All Pages' : (item.bwPages || ''));
-
-    const response = await fetch(`${API_URL}/job/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            shopCode,
-            fileUrl: uploadPlan.fileUrl,
-            objectKey: uploadPlan.objectKey,
-            uploadTicket: uploadPlan.uploadTicket,
-            fileName: item.file.name,
-            contentType: item.file.type || 'application/octet-stream',
-            copies: Number(item.copies || 1),
-            colorMode,
-            colorPages,
-            bwPages,
-            paperSize: item.paperSize || 'A4',
-            orientation: item.orientation || 'portrait',
-            duplex: item.duplex || 'simplex',
-            scale: item.scale || 'fit'
-        })
-    });
-
+    const colorMode = item.file.type.startsWith('image/') ? item.imageMode : (item.pageMode === 'all-color' ? 'color' : 'bw');
+    const colorPages = item.file.type.startsWith('image/') ? (item.imageMode === 'color' ? 'Full Image' : '') : (item.pageMode === 'all-color' ? 'All Pages' : (item.colorPages || ''));
+    const bwPages = item.file.type.startsWith('image/') ? (item.imageMode === 'bw' ? 'Full Image' : '') : (item.pageMode === 'all-bw' ? 'All Pages' : (item.bwPages || ''));
+    const response = await fetch(`${API_URL}/job/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopCode, fileUrl: uploadPlan.fileUrl, objectKey: uploadPlan.objectKey, uploadTicket: uploadPlan.uploadTicket, fileName: item.file.name, contentType: item.file.type || 'application/octet-stream', copies: Number(item.copies || 1), colorMode, colorPages, bwPages, paperSize: item.paperSize || 'A4', orientation: item.orientation || 'portrait', duplex: item.duplex || 'simplex', scale: item.scale || 'fit' }) });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-        throw new Error(payload.error || 'Could not save job metadata');
-    }
+    if (!response.ok) throw new Error(payload.error || 'Could not save job metadata');
 }
 
-function normalizeShopCode(value) {
-    return String(value || '').trim().replace(/[<>]/g, '').toUpperCase();
-}
+function normalizeShopCode(value) { return String(value || '').trim().replace(/[<>]/g, '').toUpperCase(); }
 
 function prepareIncomingFiles(selectedFiles) {
-    const validFiles = [];
-    const invalidFiles = [];
-
+    const validFiles = [], invalidFiles = [];
     for (const file of selectedFiles) {
-        if (!isAllowedFileType(file)) {
-            invalidFiles.push(`${file.name}: unsupported file type`);
-            continue;
-        }
-        if (file.size <= 0 || file.size > 100 * 1024 * 1024) {
-            invalidFiles.push(`${file.name}: file size must be 1 byte to 100 MB`);
-            continue;
-        }
-        validFiles.push({
-            file,
-            ...DEFAULT_PRINT_SETTINGS
-        });
+        if (!isAllowedFileType(file)) { invalidFiles.push(`${file.name}: unsupported type`); continue; }
+        if (file.size <= 0 || file.size > 100 * 1024 * 1024) { invalidFiles.push(`${file.name}: must be 1B to 100MB`); continue; }
+        validFiles.push({ file, ...DEFAULT_PRINT_SETTINGS });
     }
-
     return { validFiles, invalidFiles };
 }
 
-function isAllowedFileType(file) {
-    return new Set([
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'image/jpeg',
-        'image/png'
-    ]).has(file.type);
-}
+function isAllowedFileType(file) { return new Set(['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/png']).has(file.type); }
 
 function validateSubmission({ customerName, files }) {
-    if (!customerName.trim()) {
-        return 'Enter your name before sending files.';
-    }
-
-    if (files.length === 0) {
-        return 'Add at least one file before sending.';
-    }
-
+    if (!customerName.trim()) return 'Enter your name.';
+    if (files.length === 0) return 'Add at least one file.';
     for (const item of files) {
-        if (!item.file.type.startsWith('image/') && item.pageMode === 'custom' && !item.colorPages.trim() && !item.bwPages.trim()) {
-            return `Add page ranges or choose an all-pages option for ${item.file.name}.`;
-        }
-
+        if (!item.file.type.startsWith('image/') && item.pageMode === 'custom' && !item.colorPages.trim() && !item.bwPages.trim()) return `Add page ranges for ${item.file.name}.`;
         const copies = Number(item.copies || 1);
-        if (!Number.isFinite(copies) || copies < 1 || copies > 20) {
-            return `Copies for ${item.file.name} must be between 1 and 20.`;
-        }
+        if (!Number.isFinite(copies) || copies < 1 || copies > 20) return `Copies for ${item.file.name} must be 1-20.`;
     }
-
     return '';
 }
 
 async function takePendingSharedFiles() {
     const database = await openSharedFilesDb();
-
     return new Promise((resolve, reject) => {
         const transaction = database.transaction(SHARED_FILES_STORE, 'readwrite');
         const store = transaction.objectStore(SHARED_FILES_STORE);
         const getRequest = store.get('latest');
-
         getRequest.onerror = () => reject(getRequest.error);
-        getRequest.onsuccess = () => {
-            const files = Array.isArray(getRequest.result?.files) ? getRequest.result.files : [];
-            const deleteRequest = store.delete('latest');
-            deleteRequest.onerror = () => reject(deleteRequest.error);
-            deleteRequest.onsuccess = () => resolve(files);
-        };
+        getRequest.onsuccess = () => { const files = Array.isArray(getRequest.result?.files) ? getRequest.result.files : []; const del = store.delete('latest'); del.onerror = () => reject(del.error); del.onsuccess = () => resolve(files); };
     });
 }
 
 function openSharedFilesDb() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(SHARED_FILES_DB, 1);
-
-        request.onupgradeneeded = () => {
-            const database = request.result;
-            if (!database.objectStoreNames.contains(SHARED_FILES_STORE)) {
-                database.createObjectStore(SHARED_FILES_STORE);
-            }
-        };
+        request.onupgradeneeded = () => { const db = request.result; if (!db.objectStoreNames.contains(SHARED_FILES_STORE)) db.createObjectStore(SHARED_FILES_STORE); };
         request.onerror = () => reject(request.error);
         request.onsuccess = () => resolve(request.result);
     });

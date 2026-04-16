@@ -176,8 +176,11 @@ function renderJobCard(order) {
             <div class="job-tags">${tags.join('')}</div>
         </div>
         <div class="job-actions">
-            <button class="btn-print-job" data-filepath="${esc(order.filePath)}" data-orderid="${esc(order.id)}" onclick="printFileFromButton(this)" ${order.printed ? 'disabled' : ''}>
+            <button class="btn-print-job" data-orderid="${esc(order.id)}" onclick="openPrintModal('${esc(order.id)}')" ${order.printed ? 'disabled' : ''}>
                 ${order.printed ? 'Done' : 'Print'}
+            </button>
+            <button class="btn-sysdialog" data-orderid="${esc(order.id)}" onclick="openSystemPrint('${esc(order.id)}')" ${order.printed ? 'disabled' : ''}>
+                System Printer
             </button>
         </div>
     </div>`;
@@ -202,16 +205,15 @@ function skipCustomer(customerName) {
 }
 
 // ── Print Flow ────────────────────────────────────
-async function printFileFromButton(button) {
-    const filePath = button.getAttribute('data-filepath');
-    const orderId = button.getAttribute('data-orderid');
+
+// Print button — shows modal with all job details, then sends to assigned printers
+function openPrintModal(orderId) {
     const order = orders.find(o => String(o.id) === String(orderId));
+    if (!order) { toast('Order not found.', 'error'); return; }
 
-    if (!order) { toast('Order not found. Try restarting the app.', 'error'); return; }
-    currentPrintJob = { filePath, orderId, order };
+    currentPrintJob = { orderId, order };
 
-    const details = document.getElementById('printDetails');
-    details.innerHTML = `
+    document.getElementById('printDetails').innerHTML = `
         <div class="modal-field">
             <div class="modal-field-label">Customer</div>
             <div class="modal-field-value">${esc(order.customerName)}</div>
@@ -221,129 +223,129 @@ async function printFileFromButton(button) {
             <div class="modal-field-value">${esc(order.fileName)}</div>
         </div>
         <div class="modal-sep"></div>
-        <div class="modal-field">
-            <div class="modal-field-label">Color Pages</div>
-            <input type="text" class="modal-field-input" id="editColorPages" value="${esc(order.colorPages || '')}" placeholder="e.g. 1-5,8,10 or All Pages">
-            <div class="modal-field-hint">Printer: ${esc(colorPrinter || 'Not set')}</div>
-        </div>
-        <div class="modal-field">
-            <div class="modal-field-label">B&W Pages</div>
-            <input type="text" class="modal-field-input" id="editBWPages" value="${esc(order.bwPages || '')}" placeholder="e.g. 6-7,9 or All Pages">
-            <div class="modal-field-hint">Printer: ${esc(bwPrinter || 'Not set')}</div>
+        <div class="modal-grid">
+            <div class="modal-field">
+                <div class="modal-field-label">Color Pages</div>
+                <div class="modal-field-value">${esc(order.colorPages || 'None')}</div>
+                <div class="modal-field-hint">Printer: ${esc(colorPrinter || 'Not set')}</div>
+            </div>
+            <div class="modal-field">
+                <div class="modal-field-label">B&W Pages</div>
+                <div class="modal-field-value">${esc(order.bwPages || 'None')}</div>
+                <div class="modal-field-hint">Printer: ${esc(bwPrinter || 'Not set')}</div>
+            </div>
         </div>
         <div class="modal-grid">
             <div class="modal-field">
                 <div class="modal-field-label">Paper</div>
-                <select class="modal-field-input" id="editPaperSize">
-                    ${['A4','A3','Letter','Legal'].map(s => `<option value="${s}" ${order.paperSize===s?'selected':''}>${s}</option>`).join('')}
-                </select>
+                <div class="modal-field-value">${esc(order.paperSize || 'A4')}</div>
             </div>
             <div class="modal-field">
                 <div class="modal-field-label">Layout</div>
-                <select class="modal-field-input" id="editOrientation">
-                    <option value="portrait" ${order.orientation!=='landscape'?'selected':''}>Portrait</option>
-                    <option value="landscape" ${order.orientation==='landscape'?'selected':''}>Landscape</option>
-                </select>
+                <div class="modal-field-value">${esc(order.orientation || 'portrait')}</div>
             </div>
             <div class="modal-field">
                 <div class="modal-field-label">Copies</div>
-                <input type="number" class="modal-field-input" id="editCopies" min="1" max="20" value="${esc(order.copies||1)}">
+                <div class="modal-field-value">${esc(order.copies || 1)}</div>
             </div>
             <div class="modal-field">
                 <div class="modal-field-label">Sides</div>
-                <select class="modal-field-input" id="editDuplex">
-                    <option value="simplex" ${(order.duplex||'simplex')==='simplex'?'selected':''}>Single Side</option>
-                    <option value="long-edge" ${order.duplex==='long-edge'?'selected':''}>Both Sides</option>
-                </select>
+                <div class="modal-field-value">${esc(order.duplex === 'long-edge' ? 'Both Sides' : 'Single Side')}</div>
             </div>
         </div>
         <div class="modal-field">
             <div class="modal-field-label">Scale</div>
-            <select class="modal-field-input" id="editScale">
-                <option value="fit" ${(order.scale||'fit')==='fit'?'selected':''}>Fit to Page</option>
-                <option value="actual" ${order.scale==='actual'?'selected':''}>Actual Size</option>
-            </select>
+            <div class="modal-field-value">${esc(order.scale === 'actual' ? 'Actual Size' : 'Fit to Page')}</div>
         </div>`;
 
     document.getElementById('printModal').style.display = 'flex';
-    setTimeout(() => document.getElementById('editColorPages').focus(), 80);
 }
 
+// Modal Print Now — sends to assigned color/bw printers with metadata
 async function confirmPrint() {
     if (!currentPrintJob) return;
-    const { filePath, orderId, order } = currentPrintJob;
+    const { orderId, order } = currentPrintJob;
     const btn = document.getElementById('btnConfirmPrint');
     btn.disabled = true; btn.textContent = 'Printing...';
 
-    const colorPages = document.getElementById('editColorPages').value.trim();
-    const bwPages = document.getElementById('editBWPages').value.trim();
-
-    if (!colorPages && !bwPages) {
-        toast('Specify color pages or B&W pages.', 'error');
-        btn.disabled = false; btn.textContent = 'Print Now';
-        return;
-    }
-
+    const colorPages = order.colorPages || '';
+    const bwPages = order.bwPages || '';
     const nColor = normalizeSel(colorPages);
     const nBW = normalizeSel(bwPages);
-    const paperSize = document.getElementById('editPaperSize').value;
-    const orientation = document.getElementById('editOrientation').value;
-    const copies = Math.max(1, parseInt(document.getElementById('editCopies').value || '1', 10));
-    const duplex = document.getElementById('editDuplex').value;
-    const scale = document.getElementById('editScale').value;
-
-    if (paperSize !== 'A4' && !confirm(`This job uses ${paperSize}. Make sure it is loaded. Continue?`)) {
-        btn.disabled = false; btn.textContent = 'Print Now';
-        return;
-    }
 
     try {
-        const results = [], failures = [];
+        if (!colorPages && !bwPages) throw new Error('No pages specified.');
         if (colorPages && !colorPrinter) throw new Error('Color printer not set in Settings.');
         if (bwPages && !bwPrinter) throw new Error('B&W printer not set in Settings.');
 
         const mark = await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'printing' });
         if (!mark.success) throw new Error(mark.message || 'Backend rejected status update');
 
+        const results = [], failures = [];
+        const printOpts = { paperSize: order.paperSize || 'A4', orientation: order.orientation || 'portrait', copies: Math.max(1, Number(order.copies || 1)), duplex: order.duplex || 'simplex', scale: order.scale || 'fit' };
+
         if (colorPages && colorPrinter) {
-            const r = await window.electronAPI.printFile(filePath, { printerName: colorPrinter, isColor: true, pageRanges: nColor, paperSize, orientation, copies, duplex, scale });
+            const r = await window.electronAPI.printFile(order.filePath, { printerName: colorPrinter, isColor: true, pageRanges: nColor, ...printOpts });
             (r.success ? results : failures).push(`Color ${descSel(nColor)}: ${r.message || (r.success ? 'OK' : 'Failed')}`);
         }
         if (bwPages && bwPrinter) {
-            const r = await window.electronAPI.printFile(filePath, { printerName: bwPrinter, isColor: false, pageRanges: nBW, paperSize, orientation, copies, duplex, scale });
+            const r = await window.electronAPI.printFile(order.filePath, { printerName: bwPrinter, isColor: false, pageRanges: nBW, ...printOpts });
             (r.success ? results : failures).push(`B&W ${descSel(nBW)}: ${r.message || (r.success ? 'OK' : 'Failed')}`);
         }
         if (failures.length) throw new Error(failures.join('\n'));
 
-        if (results.length > 0) {
-            const o = orders.find(x => String(x.id) === String(orderId));
-            if (o) o.printed = true;
-            printedToday++;
-
-            const comp = await window.electronAPI.completeJob({ jobId: order.jobId });
-            if (!comp.success) throw new Error(comp.message || 'Could not complete job');
-
-            try { await window.electronAPI.deleteFile(filePath); } catch (_) {}
-
-            addHistory(order.fileName, order.customerName, true);
-            renderQueue();
-            updateStats();
-            closePrintModal();
-            toast('Print job sent: ' + results.join(', '), 'success');
-        } else {
-            await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'failed', error: 'no_pages_selected' });
-            removeOrder(orderId);
-            closePrintModal();
-            toast('No pages printed. Job will be retried.', 'error');
-        }
+        const o = orders.find(x => String(x.id) === String(orderId));
+        if (o) o.printed = true;
+        printedToday++;
+        const comp = await window.electronAPI.completeJob({ jobId: order.jobId });
+        if (!comp.success) throw new Error(comp.message || 'Could not complete job');
+        try { await window.electronAPI.deleteFile(order.filePath); } catch (_) {}
+        addHistory(order.fileName, order.customerName, true);
+        renderQueue(); updateStats(); closePrintModal();
+        toast('Printed: ' + results.join(', '), 'success');
     } catch (error) {
         await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'failed', error: `print_failed:${error.message}` });
         addHistory(order.fileName, order.customerName, false, error.message);
-        removeOrder(orderId);
-        closePrintModal();
+        removeOrder(orderId); closePrintModal();
         toast('Print failed: ' + error.message, 'error');
     }
     btn.disabled = false; btn.textContent = 'Print Now';
+}
+
+// Ctrl+P button — opens the file in a window with native system print dialog
+async function openSystemPrint(orderId) {
+    const order = orders.find(o => String(o.id) === String(orderId));
+    if (!order) { toast('Order not found.', 'error'); return; }
+
+    document.querySelectorAll(`[data-orderid="${orderId}"]`).forEach(b => { b.disabled = true; });
+    const btn = document.querySelector(`.btn-sysdialog[data-orderid="${orderId}"]`);
+    if (btn) btn.textContent = 'Opening...';
+
+    try {
+        const mark = await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'printing' });
+        if (!mark.success) throw new Error(mark.message || 'Backend rejected status update');
+
+        const r = await window.electronAPI.openNativePrintDialog(order.filePath);
+        if (r.success) {
+            const o = orders.find(x => String(x.id) === String(orderId));
+            if (o) o.printed = true;
+            printedToday++;
+            await window.electronAPI.completeJob({ jobId: order.jobId });
+            try { await window.electronAPI.deleteFile(order.filePath); } catch (_) {}
+            addHistory(order.fileName, order.customerName, true);
+            renderQueue(); updateStats();
+            toast('Printed via system dialog.', 'success');
+        } else {
+            await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'failed', error: `system_print_cancelled` });
+            removeOrder(orderId);
+            toast(r.message || 'Print cancelled.', 'error');
+        }
+    } catch (error) {
+        await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'failed', error: `system_print_failed:${error.message}` });
+        addHistory(order.fileName, order.customerName, false, error.message);
+        removeOrder(orderId);
+        toast('System print failed: ' + error.message, 'error');
+    }
 }
 
 function removeOrder(orderId) {
