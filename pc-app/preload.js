@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openNativePrintDialog: (filePath) => ipcRenderer.invoke('open-native-print-dialog', filePath),
     deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),
     saveNotifSound: (enabled) => ipcRenderer.invoke('save-notif-sound', enabled),
+    savePaperSizes: (sizes) => ipcRenderer.invoke('save-paper-sizes', sizes),
     onFileReceived: (callback) => ipcRenderer.on('file-received', (event, data) => callback(data)),
     onJobProcessed: (callback) => ipcRenderer.on('job-processed', (event, data) => callback(data)),
     onTunnelStatus: (callback) => ipcRenderer.on('tunnel-status', (event, data) => callback(data))

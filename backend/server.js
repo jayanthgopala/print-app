@@ -99,6 +99,10 @@ export default {
                 return await withRequestLogging(request, env, ctx, baseLog, () => handleShopPresence(request, env, requestId));
             }
 
+            if (request.method === 'POST' && url.pathname === '/shop/update-settings') {
+                return await withRequestLogging(request, env, ctx, baseLog, () => handleShopUpdateSettings(request, env, requestId));
+            }
+
             if (request.method === 'POST' && url.pathname === '/job/update-status') {
                 return await withRequestLogging(request, env, ctx, baseLog, () => handleUpdateJobStatus(request, env, ctx, requestId));
             }
@@ -139,7 +143,8 @@ async function handlePublicShopLookup(shopCode, request, env, ctx, requestId) {
                 name: shop.shop_name,
                 status: shop.is_online ? 'online' : 'offline',
                 colorPrice: shop.color_price,
-                bwPrice: shop.bw_price
+                bwPrice: shop.bw_price,
+                paperSizes: shop.paper_sizes || ['A4']
             }
         }, 200, request, env, { 'Cache-Control': 'no-store, no-cache, must-revalidate' });
     } finally {
@@ -181,7 +186,8 @@ async function handleShopToken(request, env, requestId) {
                 name: shop.shop_name,
                 colorPrice: shop.color_price,
                 bwPrice: shop.bw_price,
-                subscriptionEnd: shop.subscription_end
+                subscriptionEnd: shop.subscription_end,
+                paperSizes: shop.paper_sizes || ['A4']
             }
         }, 200, request, env);
     } finally {
@@ -477,6 +483,53 @@ async function handleShopPresence(request, env, requestId) {
     try {
         await setShopPresence(db, auth.shopCode, nextStatus === 'online');
         return json({ request_id: requestId, success: true, status: nextStatus }, 200, request, env);
+    } finally {
+        await db.end();
+    }
+}
+
+const VALID_PAPER_SIZES = [
+    'A2', 'A3', 'A4', 'A5', 'A6',
+    'ISO A0', 'ISO A1',
+    'Letter', 'Legal', 'Tabloid', 'Ledger', 'Statement', 'Executive', 'Super B',
+    'B4 (JIS)', 'B5 (JIS)',
+    'C size sheet', 'D size sheet', 'E size sheet',
+    'Architecture ASheet', 'Architecture BSheet', 'Architecture CSheet', 'Architecture DSheet', 'Architecture E1Sheet', 'Architecture ESheet',
+    'ASME F',
+    'English 14x17', 'English Photo L',
+    'Metric Photo L', 'Photo 4x4', 'Photo 5x5', 'Photo 10x12', 'Photo 89x89mm',
+    'North America 3x5', 'North America 4x6', 'North America 5x7', 'North America 5x8', 'North America 8x10',
+    'Business Card 2x3.5', 'Business Card 55x85mm', 'Business Card 55x91mm',
+    'Credit Card',
+    'Japanese Postcard',
+    'Envelope #9', 'Envelope #10', 'Envelope B5', 'Envelope C4', 'Envelope C5', 'Envelope DL', 'Envelope Monarch',
+    'Japanese Envelope Chou #3', 'Japanese Envelope Chou #4', 'Japanese Envelope Kaku #2',
+    'Japan Chou 40 Envelope', 'Japan Envelope You #4'
+];
+
+async function handleShopUpdateSettings(request, env, requestId) {
+    const auth = await requireShopAuth(request, env, requestId);
+    if (auth.errorResponse) return auth.errorResponse;
+
+    const body = await readJson(request, env, requestId);
+    if (body.errorResponse) return body.errorResponse;
+
+    const rawSizes = body.data.paperSizes;
+    if (!Array.isArray(rawSizes) || rawSizes.length === 0) {
+        return json({ error: 'paperSizes must be a non-empty array', request_id: requestId }, 400, request, env);
+    }
+    const paperSizes = rawSizes.filter(s => VALID_PAPER_SIZES.includes(s));
+    if (paperSizes.length === 0) {
+        return json({ error: 'At least one valid paper size required (A4, A3, Letter, Legal)', request_id: requestId }, 400, request, env);
+    }
+
+    const db = await createDbClient(env);
+    try {
+        await db.query(
+            `UPDATE shops SET paper_sizes = $1, updated_at = NOW() WHERE shop_code = $2`,
+            [paperSizes, auth.shopCode]
+        );
+        return json({ request_id: requestId, success: true, paperSizes }, 200, request, env);
     } finally {
         await db.end();
     }
@@ -826,7 +879,7 @@ async function createDbClient(env) {
 
 async function getShopByCode(db, shopCode) {
     const result = await db.query(
-        `SELECT id, shop_code, shop_name, password_hash, color_price, bw_price, subscription_end, is_online, last_seen_at, created_at, updated_at
+        `SELECT id, shop_code, shop_name, password_hash, color_price, bw_price, subscription_end, is_online, last_seen_at, created_at, updated_at, paper_sizes
          FROM shops
          WHERE shop_code = $1
          LIMIT 1`,

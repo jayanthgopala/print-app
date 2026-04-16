@@ -167,6 +167,13 @@
         ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
         ::-webkit-scrollbar-thumb:hover{background:var(--border2)}
 
+        /* ── Paper sizes ── */
+        .paper-sizes-grid{display:flex;flex-wrap:wrap;gap:8px;max-height:260px;overflow-y:auto;padding:4px 0}
+        .paper-size-option{display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);cursor:pointer;transition:all .15s;font-size:12px;font-weight:700;color:var(--text2);user-select:none;white-space:nowrap}
+        .paper-size-option:hover{border-color:var(--border2)}
+        .paper-size-option:has(input:checked){border-color:var(--brand);background:var(--brand-soft);color:var(--brand)}
+        .paper-size-option input{display:none}
+
         /* ── Toggle switch ── */
         .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;cursor:pointer;user-select:none}
         .toggle-label{font-size:14px;font-weight:600;color:var(--text)}
@@ -275,6 +282,13 @@
                     <select class="field-input" id="bwPrinter"><option value="">Select printer</option></select>
                 </div>
             </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div><div class="card-title">Available Paper Sizes</div><div class="card-sub">Select which paper sizes your shop supports. Customers will only see these options.</div></div>
+            </div>
+            <div class="paper-sizes-grid" id="paperSizesGrid"></div>
         </div>
 
         <div class="card">

@@ -161,11 +161,24 @@ ipcMain.handle('get-settings', () => ({
     colorPrinter: store.get('colorPrinter', ''),
     bwPrinter: store.get('bwPrinter', ''),
     password: store.get('password', ''),
-    notifSound: store.get('notifSound', true)
+    notifSound: store.get('notifSound', true),
+    paperSizes: store.get('paperSizes', ['A4'])
 }));
 
 ipcMain.handle('save-notif-sound', (_event, enabled) => {
     store.set('notifSound', enabled !== false);
+    return { success: true };
+});
+
+ipcMain.handle('save-paper-sizes', async (_event, sizes) => {
+    const filtered = Array.isArray(sizes) ? sizes : [];
+    if (filtered.length === 0) return { success: false, message: 'Select at least one paper size.' };
+    store.set('paperSizes', filtered);
+    // Sync to backend silently — will succeed once service is started
+    const token = store.get('shopToken', '');
+    if (token) {
+        postToBackend('/shop/update-settings', { paperSizes: filtered }).catch(() => {});
+    }
     return { success: true };
 });
 
@@ -204,6 +217,9 @@ ipcMain.handle('save-settings', async (_event, settings) => {
             };
         }
         store.set('shopToken', details.payload.token);
+        if (details.payload.shop?.paperSizes) {
+            store.set('paperSizes', details.payload.shop.paperSizes);
+        }
         logAppEvent('info', 'shop_token_success', {
             url: `${apiUrl()}/auth/shop-token`,
             status: details.status,
@@ -297,6 +313,8 @@ ipcMain.handle('start-service', async () => {
     }
     pollTimer = setInterval(() => { void pollJobs(); }, POLL_INTERVAL_MS);
     sendServiceStatus('online');
+    const savedSizes = store.get('paperSizes', ['A4']);
+    postToBackend('/shop/update-settings', { paperSizes: savedSizes }).catch(() => {});
     return { success: true, config: { shopId, token, status: 'online', batchLimit: JOB_BATCH_LIMIT }, message: 'Polling backend for jobs.' };
 });
 

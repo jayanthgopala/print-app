@@ -31,6 +31,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     notifSound = settings.notifSound !== false;
     document.getElementById('toggleSound').checked = notifSound;
 
+    loadPaperSizes(settings.paperSizes || ['A4']);
     await loadPrinters();
 
     // IPC listeners
@@ -515,6 +516,44 @@ function toast(msg, type = 'info', duration = 4000) {
 function toggleNotifSound(checkbox) {
     notifSound = checkbox.checked;
     window.electronAPI.saveNotifSound(notifSound);
+}
+
+const ALL_PAPER_SIZES = [
+    'A2', 'A3', 'A4', 'A5', 'A6',
+    'ISO A0', 'ISO A1',
+    'Letter', 'Legal', 'Tabloid', 'Ledger', 'Statement', 'Executive', 'Super B',
+    'B4 (JIS)', 'B5 (JIS)',
+    'C size sheet', 'D size sheet', 'E size sheet',
+    'Architecture ASheet', 'Architecture BSheet', 'Architecture CSheet', 'Architecture DSheet', 'Architecture E1Sheet', 'Architecture ESheet',
+    'ASME F',
+    'English 14x17', 'English Photo L',
+    'Metric Photo L', 'Photo 4x4', 'Photo 5x5', 'Photo 10x12', 'Photo 89x89mm',
+    'North America 3x5', 'North America 4x6', 'North America 5x7', 'North America 5x8', 'North America 8x10',
+    'Business Card 2x3.5', 'Business Card 55x85mm', 'Business Card 55x91mm',
+    'Credit Card',
+    'Japanese Postcard',
+    'Envelope #9', 'Envelope #10', 'Envelope B5', 'Envelope C4', 'Envelope C5', 'Envelope DL', 'Envelope Monarch',
+    'Japanese Envelope Chou #3', 'Japanese Envelope Chou #4', 'Japanese Envelope Kaku #2',
+    'Japan Chou 40 Envelope', 'Japan Envelope You #4'
+];
+
+function loadPaperSizes(sizes) {
+    const grid = document.getElementById('paperSizesGrid');
+    if (!grid) return;
+    grid.innerHTML = ALL_PAPER_SIZES.map(s =>
+        `<label class="paper-size-option"><input type="checkbox" value="${esc(s)}" ${sizes.includes(s) ? 'checked' : ''} onchange="savePaperSizes()"><span>${esc(s)}</span></label>`
+    ).join('');
+}
+
+async function savePaperSizes() {
+    const grid = document.getElementById('paperSizesGrid');
+    const checked = Array.from(grid.querySelectorAll('input:checked')).map(cb => cb.value);
+    if (checked.length === 0) {
+        toast('Select at least one paper size.', 'error');
+        grid.querySelector('input[value="A4"]').checked = true;
+        return;
+    }
+    await window.electronAPI.savePaperSizes(checked);
 }
 
 function playNotifSound() {

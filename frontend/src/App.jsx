@@ -273,7 +273,7 @@ export default function App() {
                                             <div className="opt-field">
                                                 <div className="opt-label">Paper</div>
                                                 <select value={item.paperSize} onChange={(e) => updateFileOption(i, 'paperSize', e.target.value)} className="input-sm">
-                                                    <option value="A4">A4</option><option value="A3">A3</option><option value="Letter">Letter</option><option value="Legal">Legal</option>
+                                                    {(pricing?.paperSizes || ['A4']).map(s => <option key={s} value={s}>{s}</option>)}
                                                 </select>
                                             </div>
                                             <div className="opt-field">
