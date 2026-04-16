@@ -72,12 +72,13 @@ export default function App() {
             return undefined;
         }
 
+        const pollMs = status === 'OFFLINE' ? 5000 : 15000;
         const interval = window.setInterval(() => {
             void fetchShopStatus(connectedShopId, { silent: true });
-        }, 15000);
+        }, pollMs);
 
         return () => window.clearInterval(interval);
-    }, [connectedShopId]);
+    }, [connectedShopId, status]);
 
     const handleSharedFiles = async () => {
         const params = new URLSearchParams(window.location.search);
