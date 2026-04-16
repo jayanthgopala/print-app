@@ -218,9 +218,6 @@ ipcMain.handle('save-settings', async (_event, settings) => {
             };
         }
         store.set('shopToken', details.payload.token);
-        if (details.payload.shop?.paperSizes) {
-            store.set('paperSizes', details.payload.shop.paperSizes);
-        }
         logAppEvent('info', 'shop_token_success', {
             url: `${apiUrl()}/auth/shop-token`,
             status: details.status,
