@@ -346,12 +346,13 @@ ipcMain.handle('print-file', async (_event, filePath, options) => {
     });
     return printFile(filePath, options);
 });
-ipcMain.handle('open-native-print-dialog', async (_event, filePath) => {
+ipcMain.handle('open-native-print-dialog', async (_event, filePath, options) => {
     try {
         const normalizedPath = path.normalize(filePath);
         if (!fs.existsSync(normalizedPath)) return { success: false, message: 'File not found' };
         const ext = path.extname(normalizedPath).toLowerCase();
-        logAppEvent('info', 'chrome_print_dialog_start', { filePath: normalizedPath, ext });
+        const opts = options || {};
+        logAppEvent('info', 'chrome_print_dialog_start', { filePath: normalizedPath, ext, opts });
 
         const printWindow = new BrowserWindow({
             show: true,
@@ -362,9 +363,14 @@ ipcMain.handle('open-native-print-dialog', async (_event, filePath) => {
             webPreferences: { contextIsolation: true, nodeIntegration: false }
         });
 
-        await loadPrintablePreview(printWindow, normalizedPath, {});
+        await loadPrintablePreview(printWindow, normalizedPath, opts);
 
-        // Trigger Chrome's built-in print preview (Ctrl+P style)
+        // Inject @page CSS with metadata so Chrome print preview picks it up
+        const pageSize = escapeHtml(opts.paperSize || 'A4');
+        const orientation = opts.orientation === 'landscape' ? 'landscape' : 'portrait';
+        await printWindow.webContents.insertCSS(`@page { size: ${pageSize} ${orientation}; margin: 10mm; }`);
+
+        // Trigger Chrome's built-in print preview with metadata
         printWindow.webContents.executeJavaScript('window.print()');
 
         // Wait for the window to be closed by the user
@@ -470,7 +476,7 @@ function mapJobToOrder(job, filePath) {
     return {
         id: `${job.id}-${Date.now()}-${secureRandomInt(1000000)}`,
         jobId: job.id,
-        customerName: job.shop_code,
+        customerName: job.customer_name || job.shop_code,
         fileName: job.file_name,
         filePath,
         colorPages: job.color_pages || (isColor ? 'All Pages' : ''),

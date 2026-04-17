@@ -439,17 +439,18 @@ async function handleCreateJob(request, env, ctx, requestId) {
 
         const result = await retryWithBackoff(() => db.query(
             `INSERT INTO jobs (
-                id, shop_code, file_url, object_key, file_name, content_type, copies, color_mode, status,
+                id, shop_code, customer_name, file_url, object_key, file_name, content_type, copies, color_mode, status,
                 color_pages, bw_pages, paper_size, orientation, duplex, scale, retry_count, last_attempt_at, last_error
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, 'pending',
-                $9, $10, $11, $12, $13, $14, 0, NULL, NULL
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending',
+                $10, $11, $12, $13, $14, $15, 0, NULL, NULL
             )
             ON CONFLICT (object_key) DO UPDATE SET object_key = jobs.object_key
-            RETURNING id, shop_code, file_url, file_name, copies, color_mode, status, created_at, retry_count, last_attempt_at`,
+            RETURNING id, shop_code, customer_name, file_url, file_name, copies, color_mode, status, created_at, retry_count, last_attempt_at`,
             [
                 crypto.randomUUID(),
                 payload.shopCode,
+                payload.customerName,
                 payload.fileUrl,
                 payload.objectKey,
                 payload.fileName,
@@ -667,6 +668,7 @@ async function claimPendingJobs(db, shopCode, requestId, userId, env) {
              RETURNING
                  job.id,
                  job.shop_code,
+                 job.customer_name,
                  job.file_url,
                  job.object_key,
                  job.file_name,
@@ -841,6 +843,7 @@ async function verifyUploadTicket(token, env) {
 function validateCreateJobPayload(data) {
     return {
         shopCode: requireShopCode(data.shopCode),
+        customerName: optionalString(data.customerName, { max: 50 }) || '',
         fileUrl: requireHttpsUrl(data.fileUrl, 'fileUrl'),
         objectKey: requireString(data.objectKey, 'objectKey', { min: 1, max: 400 }),
         uploadTicket: requireString(data.uploadTicket, 'uploadTicket', { min: 10, max: 2000 }),
@@ -850,7 +853,7 @@ function validateCreateJobPayload(data) {
         colorMode: requireEnum(data.colorMode, 'colorMode', ['color', 'bw']),
         colorPages: optionalString(data.colorPages, { max: 200 }),
         bwPages: optionalString(data.bwPages, { max: 200 }),
-        paperSize: requireEnum(data.paperSize || 'A4', 'paperSize', ['A4', 'A3', 'Letter', 'Legal']),
+        paperSize: VALID_PAPER_SIZES.includes(data.paperSize) ? data.paperSize : 'A4',
         orientation: requireEnum(data.orientation || 'portrait', 'orientation', ['portrait', 'landscape']),
         duplex: requireEnum(data.duplex || 'simplex', 'duplex', ['simplex', 'long-edge', 'short-edge']),
         scale: requireEnum(data.scale || 'fit', 'scale', ['fit', 'actual'])

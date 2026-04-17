@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateJobStatus: (payload) => ipcRenderer.invoke('update-job-status', payload),
     completeJob: (payload) => ipcRenderer.invoke('complete-job', payload),
     printFile: (filePath, options) => ipcRenderer.invoke('print-file', filePath, options),
-    openNativePrintDialog: (filePath) => ipcRenderer.invoke('open-native-print-dialog', filePath),
+    openNativePrintDialog: (filePath, options) => ipcRenderer.invoke('open-native-print-dialog', filePath, options),
     deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),
     saveNotifSound: (enabled) => ipcRenderer.invoke('save-notif-sound', enabled),
     savePaperSizes: (sizes) => ipcRenderer.invoke('save-paper-sizes', sizes),

@@ -326,7 +326,14 @@ async function openSystemPrint(orderId) {
         const mark = await window.electronAPI.updateJobStatus({ jobId: order.jobId, status: 'printing' });
         if (!mark.success) throw new Error(mark.message || 'Backend rejected status update');
 
-        const r = await window.electronAPI.openNativePrintDialog(order.filePath);
+        const r = await window.electronAPI.openNativePrintDialog(order.filePath, {
+            paperSize: order.paperSize || 'A4',
+            orientation: order.orientation || 'portrait',
+            copies: Number(order.copies || 1),
+            duplex: order.duplex || 'simplex',
+            scale: order.scale || 'fit',
+            isColor: !!(order.colorPages)
+        });
         if (r.success) {
             const o = orders.find(x => String(x.id) === String(orderId));
             if (o) o.printed = true;

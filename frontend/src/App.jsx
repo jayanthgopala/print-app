@@ -118,7 +118,7 @@ export default function App() {
                 const item = files[i];
                 const uploadPlan = await createUploadPlan(connectedShopId, item.file);
                 await uploadFileToR2(uploadPlan.uploadUrl, item.file, setProgress);
-                await createJobRecord(connectedShopId, item, uploadPlan);
+                await createJobRecord(connectedShopId, item, uploadPlan, customerName);
                 await new Promise((r) => setTimeout(r, 400));
             }
             setSentFileCount(files.length); setFiles([]); setCurrentFile(0); setTotalFiles(0); setProgress(100); setStatus('COMPLETED'); setInfoMessage(''); setErrorMessage('');
@@ -363,11 +363,11 @@ function uploadFileToR2(uploadUrl, file, onProgress) {
     });
 }
 
-async function createJobRecord(shopCode, item, uploadPlan) {
+async function createJobRecord(shopCode, item, uploadPlan, customerName) {
     const colorMode = item.file.type.startsWith('image/') ? item.imageMode : (item.pageMode === 'all-color' ? 'color' : 'bw');
     const colorPages = item.file.type.startsWith('image/') ? (item.imageMode === 'color' ? 'Full Image' : '') : (item.pageMode === 'all-color' ? 'All Pages' : (item.colorPages || ''));
     const bwPages = item.file.type.startsWith('image/') ? (item.imageMode === 'bw' ? 'Full Image' : '') : (item.pageMode === 'all-bw' ? 'All Pages' : (item.bwPages || ''));
-    const response = await fetch(`${API_URL}/job/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopCode, fileUrl: uploadPlan.fileUrl, objectKey: uploadPlan.objectKey, uploadTicket: uploadPlan.uploadTicket, fileName: item.file.name, contentType: item.file.type || 'application/octet-stream', copies: Number(item.copies || 1), colorMode, colorPages, bwPages, paperSize: item.paperSize || 'A4', orientation: item.orientation || 'portrait', duplex: item.duplex || 'simplex', scale: item.scale || 'fit' }) });
+    const response = await fetch(`${API_URL}/job/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopCode, customerName: customerName || '', fileUrl: uploadPlan.fileUrl, objectKey: uploadPlan.objectKey, uploadTicket: uploadPlan.uploadTicket, fileName: item.file.name, contentType: item.file.type || 'application/octet-stream', copies: Number(item.copies || 1), colorMode, colorPages, bwPages, paperSize: item.paperSize || 'A4', orientation: item.orientation || 'portrait', duplex: item.duplex || 'simplex', scale: item.scale || 'fit' }) });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || 'Could not save job metadata');
 }
